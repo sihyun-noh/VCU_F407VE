@@ -1,0 +1,9 @@
+.\objects\dns.o: Internet\dns.c
+.\objects\dns.o: C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\Bin\..\include\string.h
+.\objects\dns.o: C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\Bin\..\include\stdlib.h
+.\objects\dns.o: Internet\socket.h
+.\objects\dns.o: Internet\wizchip_conf.h
+.\objects\dns.o: C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\Bin\..\include\stdint.h
+.\objects\dns.o: Internet\w5500.h
+.\objects\dns.o: Internet\wizchip_conf.h
+.\objects\dns.o: Internet\dns.h

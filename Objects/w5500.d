@@ -1,0 +1,9 @@
+.\objects\w5500.o: Internet\w5500.c
+.\objects\w5500.o: Internet\w5500.h
+.\objects\w5500.o: C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\Bin\..\include\stdint.h
+.\objects\w5500.o: Internet\wizchip_conf.h
+.\objects\w5500.o: Internet\w5500.h
+.\objects\w5500.o: C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\Bin\..\include\stdio.h
+.\objects\w5500.o: Internet\dhcp.h
+.\objects\w5500.o: Internet\dns.h
+.\objects\w5500.o: Internet\socket.h
