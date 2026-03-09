@@ -43,13 +43,13 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  //		uint8_t mode;              	 	   /* 0 stop / 1 setpoint (example) */
-  bool upper_force_stop;   /* highest priority stop */
-  bool upper_force_active; /* highest priority active */
-  uint8_t enable_driver_config;
-  uint8_t relay_mask;
-  bool cultivator_down;
-  bool cultivator_on;
+  uint8_t driver_config_bitmask; /* data[0]: motor driver configuration */
+  bool cultivator_down;          /* data[1] */
+  bool cultivator_on;            /* data[2] */
+  bool upper_force_stop;         /* data[3]: E-stop */
+  bool upper_force_active;       /* data[4]: force upper mode */
+  uint8_t relay_mask;            /* data[5] */
+  bool automation;               /* data[6] */
 } upper_intent_t;
 
 typedef struct {
@@ -249,15 +249,23 @@ static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
   out->ts = now_tick();
   out->valid = true;
 
-  /* Example payload:
-  data[0..1]=axis1 LE, data[2..3]=axis2 LE, data[4]=mode, data[5] bit0=force_stop */
-  out->enable_driver_config = (uint8_t)rx->data[0];
+  /* Upper -> gateway setting payload (0x18FF0210):
+   * data[0]: driver configuration bit mask
+   * data[1]: cultivator_down
+   * data[2]: cultivator_on
+   * data[3]: E-stop
+   * data[4]: force upper mode
+   * data[5]: relay mask
+   * data[6]: automation
+   * data[7]: reserved
+   */
+  out->driver_config_bitmask = (uint8_t)rx->data[0];
   out->cultivator_down = ((rx->data[1] & 0x01u) != 0u);
   out->cultivator_on = ((rx->data[2] & 0x01u) != 0u);
-
   out->upper_force_stop = ((rx->data[3] & 0x01u) != 0u);
   out->upper_force_active = ((rx->data[4] & 0x01u) != 0u);
   out->relay_mask = (uint8_t)rx->data[5];
+  out->automation = ((rx->data[6] & 0x01u) != 0u);
 
   return true;
 }
@@ -601,9 +609,15 @@ static void fsm_thread_entry(void* parameter) {
     // out_st.axis1_cmd = out_cmd.rpm_axis1;
     // out_st.axis2_cmd = out_cmd.rpm_axis2;
 
-    /* Apply same default driver configuration to left/right. */
-    out_cmd_left.enable_bit |= MOTOR_DRV_DEFAULT_ENABLE_BITS;
-    out_cmd_right.enable_bit |= MOTOR_DRV_DEFAULT_ENABLE_BITS;
+    /* Apply same default driver configuration to left/right.
+     * Accept upper-supplied config only when enable bits are BOTH_ENABLE.
+     */
+    uint8_t driver_cfg = MOTOR_DRV_DEFAULT_ENABLE_BITS;
+    if (upper_ok && ((upper.driver_config_bitmask & D0_ENABLE_MASK) == D0_EN_BOTH_ENABLE))
+      driver_cfg = upper.driver_config_bitmask;
+
+    out_cmd_left.enable_bit = driver_cfg;
+    out_cmd_right.enable_bit = driver_cfg;
 
     out_cmd_left.axis1_accel_bit = MOTOR_DRV_DEFAULT_AXIS1_ACC;
     out_cmd_left.axis2_accel_bit = MOTOR_DRV_DEFAULT_AXIS2_ACC;
