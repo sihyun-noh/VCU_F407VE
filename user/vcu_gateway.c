@@ -409,8 +409,11 @@ static void sbus_thread_entry(void* parameter) {
     rc.failsafe = failsafe;
 
     /* TODO: map channels properly */
-    rc.rc_enable = (ch.CH9 > 1000);         /* CH9 */
-    rc.rc_emergency_stop = (ch.CH5 > 1000); /* example CH5 */
+		rc.cultivator_down = (ch.CH5 > 1000);
+		rc.cultivator_on = (ch.CH6 > 1000);
+    rc.rc_emergency_stop = (ch.CH8 > 1000); 
+		rc.rc_enable = (ch.CH9 > 1000);         
+   
 
     /* axis mapping example (center=992 assumption) */
         rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 */
@@ -489,6 +492,10 @@ static void fsm_thread_entry(void* parameter) {
     if (upper_force_stop)
       out_st.flags |= (1u << 2);
 
+		/* rc status mapping */
+		out_st.
+		
+		/* motor driver status mapping */
     out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
     out_st.md_right_fault_msg = (uint8_t)(motor_right_st.fault_bits & 0xFF);
 
@@ -538,8 +545,12 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_SETPOINT;
         // out_cmd.rpm_axis1 = rc.axis1; out_cmd.rpm_axis2 = rc.axis2;
         /* Left/right value drives both wheels on each side with same command. */
-        out_cmd_left.rpm_axis1 = rc.left_rpm_value;
-        out_cmd_left.rpm_axis2 = rc.left_rpm_value;
+        
+				out_cmd_left.rpm_axis1 = rc.left_rpm_value;
+				/*test*/
+				//out_cmd_left.rpm_axis2 = rc.left_rpm_value;
+        out_cmd_left.rpm_axis2 = rc.right_rpm_value;
+				
         out_cmd_right.rpm_axis1 = rc.right_rpm_value;
         out_cmd_right.rpm_axis2 = rc.right_rpm_value;
 
