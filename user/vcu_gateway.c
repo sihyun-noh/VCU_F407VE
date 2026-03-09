@@ -35,6 +35,8 @@ typedef struct {
   int16_t axis2; /* rc Right stick left/right */
   int16_t axis3; /* rc Left stick up/down */
   int16_t axis4; /* rc Left stick left/right */
+  int16_t left_rpm_value;  /* differential mix result for left motor */
+  int16_t right_rpm_value; /* differential mix result for right motor */
   bool failsafe;
 } rc_intent_t;
 
@@ -188,6 +190,17 @@ static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
   int16_t value = sbus_to_cmd(sbus_data);
   pack_int16_hi_lo(value, &data[1], &data[0]);
   return value;
+}
+
+static void make_diff_drive_rpm(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
+  int32_t l = (int32_t)throttle + (int32_t)steering;
+  int32_t r = (int32_t)throttle - (int32_t)steering;
+
+  l = clamp_i32(l, CMD_MIN, CMD_MAX);
+  r = clamp_i32(r, CMD_MIN, CMD_MAX);
+
+  *left = (int16_t)l;
+  *right = (int16_t)r;
 }
 
 static void make_can_payload_from_sbus(int16_t sbus_data, uint8_t data[8]) {
@@ -400,10 +413,16 @@ static void sbus_thread_entry(void* parameter) {
     rc.rc_emergency_stop = (ch.CH5 > 1000); /* example CH5 */
 
     /* axis mapping example (center=992 assumption) */
-    rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 */
-    rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 */
-    rc.axis3 = sbus_convert_to_control(ch.CH3, rpm_v); /* CH3 */
-    rc.axis4 = sbus_convert_to_control(ch.CH4, rpm_v); /* CH4 */
+        rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 */
+        rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 */
+        rc.axis3 = sbus_convert_to_control(ch.CH3, rpm_v); /* CH3 */
+        rc.axis4 = sbus_convert_to_control(ch.CH4, rpm_v); /* CH4 */
+
+        /* Differential drive:
+         * CH3 = throttle (forward/backward)
+         * CH1 = steering (left/right)
+         */
+        make_diff_drive_rpm(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
 
     // rc.axis1 = (int16_t)((int32_t)ch[1] - 992); /* CH2 */
     // rc.axis2 = (int16_t)((int32_t)ch[3] - 992); /* CH4 */
@@ -518,10 +537,11 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.src = SRC_RC;
         out_cmd_right.type = CMD_SETPOINT;
         // out_cmd.rpm_axis1 = rc.axis1; out_cmd.rpm_axis2 = rc.axis2;
-        out_cmd_left.rpm_axis1 = rc.axis1;
-        out_cmd_left.rpm_axis2 = rc.axis3;
-        out_cmd_right.rpm_axis1 = rc.axis1;
-        out_cmd_right.rpm_axis2 = rc.axis3;
+        /* Left/right value drives both wheels on each side with same command. */
+        out_cmd_left.rpm_axis1 = rc.left_rpm_value;
+        out_cmd_left.rpm_axis2 = rc.left_rpm_value;
+        out_cmd_right.rpm_axis1 = rc.right_rpm_value;
+        out_cmd_right.rpm_axis2 = rc.right_rpm_value;
 
         out_st.control_src = 1;
         out_st.stop_reason = 0;
