@@ -31,7 +31,6 @@ typedef struct {
   bool rc_emergency_stop; /* emergency stop */
   bool cultivator_down;
   bool cultivator_on;
-
   int16_t axis1; /* rc Right stick up/down */
   int16_t axis2; /* rc Right stick left/right */
   int16_t axis3; /* rc Left stick up/down */
@@ -54,10 +53,10 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  int16_t driver_f_axis1_rpm;
-  int16_t driver_f_axis2_rpm;
-  int16_t driver_r_axis1_rpm;
-  int16_t driver_r_axis2_rpm;
+  int16_t driver_left_axis1_rpm;
+  int16_t driver_left_axis2_rpm;
+  int16_t driver_right_axis1_rpm;
+  int16_t driver_right_axis2_rpm;
 } upper_intent_rpm_t;
 
 typedef struct {
@@ -86,18 +85,18 @@ typedef struct {
   uint8_t control_src;    /* 0 stop, 1 RC, 2 Upper */
   uint8_t stop_reason;    /* 0 none, 1 upper_force, 2 rc_emg, 3 motor_fault, 4 timeout */
   uint8_t flags;          /* bit0 rc_enable, bit1 rc_emg, bit2 upper_force */
-  uint8_t md_f_fault_msg; /* motor driver forward */
-  uint8_t md_r_fault_msg; /* motor dirver reverse */
+  uint8_t md_left_fault_msg;  /* motor driver left */
+  uint8_t md_right_fault_msg; /* motor driver right */
   uint8_t relay_st;       /* Bit mask */
 
 } upper_status_t;
 
 typedef struct {
   rt_tick_t ts;
-  int16_t driver_f_axis1_rpm;
-  int16_t driver_f_axis2_rpm;
-  int16_t driver_r_axis1_rpm;
-  int16_t driver_r_axis2_rpm;
+  int16_t driver_left_axis1_rpm;
+  int16_t driver_left_axis2_rpm;
+  int16_t driver_right_axis1_rpm;
+  int16_t driver_right_axis2_rpm;
 } upper_status_rpm_t;
 
 /* CAN frame for RX queue */
@@ -114,8 +113,8 @@ struct {
   upper_intent_rpm_t upper_cmd_rpm;
   motor_cmd_t motor_cmd;
 
-  motor_status_t motor_f;
-  motor_status_t motor_r;
+  motor_status_t motor_left;
+  motor_status_t motor_right;
   upper_status_t upper_vcu_st;
   upper_status_rpm_t upper_rpm_st;
 } g_latest;
@@ -266,10 +265,10 @@ static bool decode_upper_rpm_cmd(const can_frame_t* rx, upper_intent_rpm_t* out)
 
   /* Example payload:
      data[0..1]=axis1 LE, data[2..3]=axis2 LE, data[4]=mode, data[5] bit0=force_stop */
-  out->driver_f_axis1_rpm = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
-  out->driver_f_axis2_rpm = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
-  out->driver_r_axis1_rpm = (int16_t)((uint16_t)rx->data[4] << 8 | ((uint16_t)rx->data[5]));
-  out->driver_r_axis2_rpm = (int16_t)((uint16_t)rx->data[6] << 8 | ((uint16_t)rx->data[7]));
+  out->driver_left_axis1_rpm = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
+  out->driver_left_axis2_rpm = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
+  out->driver_right_axis1_rpm = (int16_t)((uint16_t)rx->data[4] << 8 | ((uint16_t)rx->data[5]));
+  out->driver_right_axis2_rpm = (int16_t)((uint16_t)rx->data[6] << 8 | ((uint16_t)rx->data[7]));
 
   return true;
 }
@@ -323,14 +322,14 @@ static void pack_upper_status(const upper_status_t* st, uint8_t out[8]) {
 static void pack_upper_status_rpm(const upper_status_rpm_t* rpm_fb, uint8_t out[8]) {
   memset(out, 0, 8);
 
-  out[0] = (uint8_t)((rpm_fb->driver_f_axis1_rpm >> 8) & 0xFF);
-  out[1] = (uint8_t)(rpm_fb->driver_f_axis1_rpm & 0xFF);
-  out[2] = (uint8_t)((rpm_fb->driver_f_axis2_rpm >> 8) & 0xFF);
-  out[3] = (uint8_t)(rpm_fb->driver_f_axis2_rpm & 0xFF);
-  out[4] = (uint8_t)((rpm_fb->driver_r_axis1_rpm >> 8) & 0xFF);
-  out[5] = (uint8_t)(rpm_fb->driver_r_axis1_rpm & 0xFF);
-  out[6] = (uint8_t)((rpm_fb->driver_r_axis2_rpm >> 8) & 0xFF);
-  out[7] = (uint8_t)(rpm_fb->driver_r_axis2_rpm & 0xFF);
+  out[0] = (uint8_t)((rpm_fb->driver_left_axis1_rpm >> 8) & 0xFF);
+  out[1] = (uint8_t)(rpm_fb->driver_left_axis1_rpm & 0xFF);
+  out[2] = (uint8_t)((rpm_fb->driver_left_axis2_rpm >> 8) & 0xFF);
+  out[3] = (uint8_t)(rpm_fb->driver_left_axis2_rpm & 0xFF);
+  out[4] = (uint8_t)((rpm_fb->driver_right_axis1_rpm >> 8) & 0xFF);
+  out[5] = (uint8_t)(rpm_fb->driver_right_axis1_rpm & 0xFF);
+  out[6] = (uint8_t)((rpm_fb->driver_right_axis2_rpm >> 8) & 0xFF);
+  out[7] = (uint8_t)(rpm_fb->driver_right_axis2_rpm & 0xFF);
   /*
     out[3] = (uint8_t)(st->axis1_cmd & 0xFF);
     out[4] = (uint8_t)((st->axis1_cmd >> 8) & 0xFF);
@@ -422,8 +421,8 @@ static void fsm_thread_entry(void* parameter) {
   rc_intent_t rc;
   upper_intent_t upper;
   upper_intent_rpm_t upper_rpm;
-  motor_status_t motor_F;
-  motor_status_t motor_R;
+  motor_status_t motor_left_st;
+  motor_status_t motor_right_st;
 
   for (;;) {
     rt_thread_delay(FSM_PERIOD_MS);
@@ -434,29 +433,29 @@ static void fsm_thread_entry(void* parameter) {
     upper = g_latest.upper_cmd_config;
     upper_rpm = g_latest.upper_cmd_rpm;
     /* motor driver status */
-    motor_F = g_latest.motor_f;
-    motor_R = g_latest.motor_r;
+    motor_left_st = g_latest.motor_left;
+    motor_right_st = g_latest.motor_right;
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
     bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
 
     /* motor driver status check */
-    bool motor_F_ok = motor_F.valid && is_fresh_tick(now, motor_F.ts, MOTOR_TIMEOUT_MS) && (motor_F.fault_bits == 0);
-    bool motor_R_ok = motor_R.valid && is_fresh_tick(now, motor_R.ts, MOTOR_TIMEOUT_MS) && (motor_R.fault_bits == 0);
+    bool motor_left_ok = motor_left_st.valid && is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS) && (motor_left_st.fault_bits == 0);
+    bool motor_right_ok = motor_right_st.valid && is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS) && (motor_right_st.fault_bits == 0);
 
     bool upper_force_stop = upper.upper_force_stop;
     bool rc_emg = rc.rc_emergency_stop;
 
-    /* Forward motor driver cmd */
-    motor_cmd_t out_cmd_F;
-    memset(&out_cmd_F, 0, sizeof(out_cmd_F));
-    out_cmd_F.ts = now;
+    /* Left motor driver cmd */
+    motor_cmd_t out_cmd_left;
+    memset(&out_cmd_left, 0, sizeof(out_cmd_left));
+    out_cmd_left.ts = now;
 
-    /* Reverse motor dirver cmd */
-    motor_cmd_t out_cmd_R;
-    memset(&out_cmd_R, 0, sizeof(out_cmd_R));
-    out_cmd_R.ts = now;
+    /* Right motor driver cmd */
+    motor_cmd_t out_cmd_right;
+    memset(&out_cmd_right, 0, sizeof(out_cmd_right));
+    out_cmd_right.ts = now;
 
     /* upper status */
     upper_status_t out_st;
@@ -471,42 +470,42 @@ static void fsm_thread_entry(void* parameter) {
     if (upper_force_stop)
       out_st.flags |= (1u << 2);
 
-    out_st.md_f_fault_msg = (uint8_t)(motor_F.fault_bits & 0xFF);
-    out_st.md_r_fault_msg = (uint8_t)(motor_R.fault_bits & 0xFF);
+    out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
+    out_st.md_right_fault_msg = (uint8_t)(motor_right_st.fault_bits & 0xFF);
 
     /* STOP conditions (highest priority) */
     if (upper_force_stop) {
       // out_cmd.src = SRC_NONE; out_cmd.type = CMD_STOP;
-      out_cmd_F.src = SRC_NONE;
-      out_cmd_F.type = CMD_STOP;
-      out_cmd_R.src = SRC_NONE;
-      out_cmd_R.type = CMD_STOP;
+      out_cmd_left.src = SRC_NONE;
+      out_cmd_left.type = CMD_STOP;
+      out_cmd_right.src = SRC_NONE;
+      out_cmd_right.type = CMD_STOP;
       out_st.control_src = 0;
       out_st.stop_reason = 1;
     } else if (rc_emg) {
       // out_cmd.src = SRC_NONE; out_cmd.type = CMD_STOP;
-      out_cmd_F.src = SRC_NONE;
-      out_cmd_F.type = CMD_STOP;
-      out_cmd_R.src = SRC_NONE;
-      out_cmd_R.type = CMD_STOP;
+      out_cmd_left.src = SRC_NONE;
+      out_cmd_left.type = CMD_STOP;
+      out_cmd_right.src = SRC_NONE;
+      out_cmd_right.type = CMD_STOP;
       out_st.control_src = 0;
       out_st.stop_reason = 2;
-    } else if (!motor_F_ok) {
+    } else if (!motor_left_ok) {
       // out_cmd.src = SRC_NONE; out_cmd.type = CMD_STOP;
-      out_cmd_F.src = SRC_NONE;
-      out_cmd_F.type = CMD_STOP;
-      out_cmd_R.src = SRC_NONE;
-      out_cmd_R.type = CMD_STOP;
+      out_cmd_left.src = SRC_NONE;
+      out_cmd_left.type = CMD_STOP;
+      out_cmd_right.src = SRC_NONE;
+      out_cmd_right.type = CMD_STOP;
       out_st.control_src = 0;
-      out_st.stop_reason = (motor_F.valid && motor_F.fault_bits != 0) ? 3 : 4;
+      out_st.stop_reason = (motor_left_st.valid && motor_left_st.fault_bits != 0) ? 3 : 4;
     }
     /*
-    else if (!motor_R_ok)
+    else if (!motor_right_ok)
     {
-        out_cmd_F.src = SRC_NONE; out_cmd_F.type = CMD_STOP;
-        out_cmd_R.src = SRC_NONE; out_cmd_R.type = CMD_STOP;
+        out_cmd_left.src = SRC_NONE; out_cmd_left.type = CMD_STOP;
+        out_cmd_right.src = SRC_NONE; out_cmd_right.type = CMD_STOP;
         out_st.control_src = 0;
-        out_st.stop_reason = (motor_R.valid && motor_R.fault_bits != 0) ? 5 : 6;
+        out_st.stop_reason = (motor_right_st.valid && motor_right_st.fault_bits != 0) ? 5 : 6;
     }
     */
     else {
@@ -514,52 +513,52 @@ static void fsm_thread_entry(void* parameter) {
       if (rc_ok && rc.rc_enable) {
         // rt_kprintf("stop_reason :rc_ok \n");
         // out_cmd.src = SRC_RC; out_cmd.type = CMD_SETPOINT;
-        out_cmd_F.src = SRC_RC;
-        out_cmd_F.type = CMD_SETPOINT;
-        out_cmd_R.src = SRC_RC;
-        out_cmd_R.type = CMD_SETPOINT;
+        out_cmd_left.src = SRC_RC;
+        out_cmd_left.type = CMD_SETPOINT;
+        out_cmd_right.src = SRC_RC;
+        out_cmd_right.type = CMD_SETPOINT;
         // out_cmd.rpm_axis1 = rc.axis1; out_cmd.rpm_axis2 = rc.axis2;
-        out_cmd_F.rpm_axis1 = rc.axis1;
-        out_cmd_F.rpm_axis2 = rc.axis3;
-        out_cmd_R.rpm_axis1 = rc.axis1;
-        out_cmd_R.rpm_axis2 = rc.axis3;
+        out_cmd_left.rpm_axis1 = rc.axis1;
+        out_cmd_left.rpm_axis2 = rc.axis3;
+        out_cmd_right.rpm_axis1 = rc.axis1;
+        out_cmd_right.rpm_axis2 = rc.axis3;
 
         out_st.control_src = 1;
         out_st.stop_reason = 0;
       } else if (upper_ok) {
         // rt_kprintf("stop_reason :upper_ok \n");
         // out_cmd.src = SRC_UPPER;
-        out_cmd_F.src = SRC_UPPER;
-        out_cmd_R.src = SRC_UPPER;
+        out_cmd_left.src = SRC_UPPER;
+        out_cmd_right.src = SRC_UPPER;
         if (upper.upper_force_active == 0) {
           // out_cmd.type = CMD_STOP;
           // out_cmd.rpm_axis1 = 0; out_cmd.rpm_axis2 = 0;
-          out_cmd_F.type = CMD_STOP;
-          out_cmd_F.rpm_axis1 = 0;
-          out_cmd_F.rpm_axis2 = 0;
-          out_cmd_R.type = CMD_STOP;
-          out_cmd_R.rpm_axis1 = 0;
-          out_cmd_R.rpm_axis2 = 0;
+          out_cmd_left.type = CMD_STOP;
+          out_cmd_left.rpm_axis1 = 0;
+          out_cmd_left.rpm_axis2 = 0;
+          out_cmd_right.type = CMD_STOP;
+          out_cmd_right.rpm_axis1 = 0;
+          out_cmd_right.rpm_axis2 = 0;
 
         } else {
           // out_cmd.type = CMD_SETPOINT;
           // out_cmd.rpm_axis1 = upper.rpm_axis1; out_cmd.rpm_axis2 = upper.rpm_axis2;
-          out_cmd_F.type = CMD_SETPOINT;
-          out_cmd_F.rpm_axis1 = upper_rpm.driver_f_axis1_rpm;
-          out_cmd_F.rpm_axis2 = upper_rpm.driver_f_axis2_rpm;
-          out_cmd_R.type = CMD_SETPOINT;
-          out_cmd_R.rpm_axis1 = upper_rpm.driver_r_axis1_rpm;
-          out_cmd_R.rpm_axis2 = upper_rpm.driver_r_axis2_rpm;
+          out_cmd_left.type = CMD_SETPOINT;
+          out_cmd_left.rpm_axis1 = upper_rpm.driver_left_axis1_rpm;
+          out_cmd_left.rpm_axis2 = upper_rpm.driver_left_axis2_rpm;
+          out_cmd_right.type = CMD_SETPOINT;
+          out_cmd_right.rpm_axis1 = upper_rpm.driver_right_axis1_rpm;
+          out_cmd_right.rpm_axis2 = upper_rpm.driver_right_axis2_rpm;
         }
         out_st.control_src = 2;
         out_st.stop_reason = 0;
       } else {
 
         rt_kprintf("stop_reason : none \n");
-        out_cmd_F.src = SRC_NONE;
-        out_cmd_F.type = CMD_STOP;
-        out_cmd_R.src = SRC_NONE;
-        out_cmd_R.type = CMD_STOP;
+        out_cmd_left.src = SRC_NONE;
+        out_cmd_left.type = CMD_STOP;
+        out_cmd_right.src = SRC_NONE;
+        out_cmd_right.type = CMD_STOP;
         out_st.control_src = 0;
         out_st.stop_reason = 4;
       }
@@ -571,18 +570,18 @@ static void fsm_thread_entry(void* parameter) {
     /*motor driver1 bit mask*/
     /* some to bit mask*/
     /* TODO*/
-    out_cmd_F.enable_bit |= D0_EN_BOTH_ENABLE;
+    out_cmd_left.enable_bit |= D0_EN_BOTH_ENABLE;
     // out_cmd.enable_bit |= D0_RESET_EN;
     // out_cmd.enable_bit |= D0_SLIDE_EN;
-    out_cmd_F.enable_bit |= D0_AIXS1_SPEED_MODE;
-    out_cmd_F.enable_bit |= D0_AIXS2_SPEED_MODE;
+    out_cmd_left.enable_bit |= D0_AIXS1_SPEED_MODE;
+    out_cmd_left.enable_bit |= D0_AIXS2_SPEED_MODE;
 
-    out_cmd_F.axis1_accel_bit = 0x64;
-    out_cmd_F.axis2_accel_bit = 0x64;
+    out_cmd_left.axis1_accel_bit = 0x64;
+    out_cmd_left.axis2_accel_bit = 0x64;
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-    g_latest.motor_cmd = out_cmd_F;
+    g_latest.motor_cmd = out_cmd_left;
 
     g_latest.upper_vcu_st = out_st;
     rt_mutex_release(g_lock);
@@ -615,19 +614,19 @@ static void can_thread_entry(void* parameter) {
         continue;
       }
 
-      /* motor driver Forward status */
-      motor_status_t ms_f;
-      if (decode_motor_status(&rx, &ms_f)) {
+      /* motor driver left status */
+      motor_status_t ms_left;
+      if (decode_motor_status(&rx, &ms_left)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-        g_latest.motor_f = ms_f;
+        g_latest.motor_left = ms_left;
         rt_mutex_release(g_lock);
         continue;
       }
-      /* motor driver Reverse status */
-      motor_status_t ms_r;
-      if (decode_motor_status(&rx, &ms_r)) {
+      /* motor driver right status */
+      motor_status_t ms_right;
+      if (decode_motor_status(&rx, &ms_right)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-        g_latest.motor_r = ms_r;
+        g_latest.motor_right = ms_right;
         rt_mutex_release(g_lock);
         continue;
       }
@@ -662,7 +661,7 @@ static void can_thread_entry(void* parameter) {
       pack_upper_status(&st, d1);
       (void)can_hw_send_ext(CANID_UPPER_STATUS_TX, d1, 8);
 
-      /* send driver forward & reverse feedback rpm data to upper */
+      /* send driver left & right feedback rpm data to upper */
       pack_upper_status_rpm(&st_rpm, d1);
       (void)can_hw_send_ext(CANID_UPPER_STATUS_TX, d1, 8);
     }
