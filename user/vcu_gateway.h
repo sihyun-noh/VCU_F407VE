@@ -8,6 +8,17 @@
 extern "C" {
 #endif
 
+/* ===================== SBUS meth ===================== */
+#define SBUS_MIN    272
+#define SBUS_CENTER 992
+#define SBUS_MAX    1712
+
+#define CMD_MIN    (-500)
+#define CMD_CENTER (0)
+#define CMD_MAX    (500)
+
+#define DEADBAND 10
+
 /* ===================== IDs / Periods ===================== */
 #define CANID_UPPER_STATUS_RPM_TX   0x18FF0300u /* upper feedback: motor driver status */
 #define CANID_UPPER_STATUS_TX       0x18FF0310u /* upper feedback: vcu gateway status */

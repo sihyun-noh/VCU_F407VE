@@ -142,15 +142,7 @@ static inline bool is_fresh_tick(rt_tick_t now, rt_tick_t ts, uint32_t timeout_m
   return dt_ms < timeout_ms;
 }
 
-#define SBUS_MIN    272
-#define SBUS_CENTER 992
-#define SBUS_MAX    1712
 
-#define CMD_MIN    (-500)
-#define CMD_CENTER (0)
-#define CMD_MAX    (500)
-
-#define DEADBAND 10
 
 int16_t rpm_a;
 SBUS_CH_DATA sbus_data_raw_a;

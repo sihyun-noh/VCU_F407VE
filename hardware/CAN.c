@@ -1053,90 +1053,23 @@ void FourMotorRun(int* speed) {
 
 */
 
-#define SBUS_MIN		272
-#define SBUS_CENTER	992
-#define SBUS_MAX		1712
-
-#define CMD_MIN			(-500)
-#define CMD_CENTER	(0)
-#define CMD_MAX			(500)
-
-#define DEADBAND		10
-
-unsigned int rpm;
-
-static inline int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi){
-	if(v < lo)return lo;
-	if(v > hi)return hi;
-	return v;
-}
-
-int16_t sbus_to_cmd30000(int16_t sbus_data){
-	sbus_data = (int16_t)clamp_i32(sbus_data, SBUS_MIN, SBUS_MAX);
-	
-	if(sbus_data >(SBUS_CENTER - DEADBAND) && sbus_data < (SBUS_CENTER + DEADBAND)){
-		return 0;
-	}		
-	if(sbus_data >= SBUS_CENTER){
-		int32_t num = (int32_t)(sbus_data - SBUS_CENTER) * CMD_MAX;
-		int32_t den = (SBUS_MAX - SBUS_CENTER);
-		return (int16_t)((num / den));
-	}else {
-		int32_t num = (int32_t)(SBUS_CENTER - sbus_data) * (- CMD_MIN);
-		int32_t den = (SBUS_CENTER - SBUS_MIN);
-		return (int16_t)(-(num / den));
-	}
-}
-
-// int16 -> Data1(high), Data2(low) (bin-endian packing)
-
-static inline void pack_int16_hi_lo(int16_t v, uint8_t *hi, uint8_t *lo){
-	uint16_t u = (uint16_t)v;
-	*hi = (uint8_t)(u >> 8);
-	*lo = (uint8_t)(u & 0xFF);
-}
-
-void make_can_payload_from_sbus(int16_t sbus_data, uint8_t data[8]){
-	int16_t cmd = sbus_to_cmd30000(sbus_data);
-	
-	data[0] = 0xE3;
-	pack_int16_hi_lo(cmd, &data[1], &data[2]);
-	data[3] = 0x64;
-	pack_int16_hi_lo(cmd, &data[4], &data[5]);
-	data[6] = 0x64;
-	data[7] = 0x0;
-	
-}
 
 static void Sbus_thread_entry(void* parameter) {
   double x = 0;
   double y = 0;
   u8 num = *(u8*)parameter;
-	uint8_t cmd[8] = {0};
-	uint8_t rpm_v[2] = {0};
 
   while (1) {
 
 		
-    //x = (1024 - SBUS_CH.CH2) / 670.5;              /*输入x轴的量程占比*/
-    //y = (1024 - SBUS_CH.CH1) / 670.5;              /*输入y轴的量程占比*/
+    x = (1024 - SBUS_CH.CH2) / 670.5;              /*输入x轴的量程占比*/
+    y = (1024 - SBUS_CH.CH1) / 670.5;              /*输入y轴的量程占比*/
 
-    //coordinate_transformation(x, y, LRSpeed, 506); /*将速度值计算好取出*/
-		//rt_kprintf("xxxxx%d %d\n", LRSpeed[0], LRSpeed[1]);
-    //FourMotorRun(LRSpeed); 
+    coordinate_transformation(x, y, LRSpeed, 506); /*将速度值计算好取出*/
+		rt_kprintf("xxxxx%d %d\n", LRSpeed[0], LRSpeed[1]);
+    FourMotorRun(LRSpeed); 
 		
-		make_can_payload_from_sbus(SBUS_CH.CH3, cmd);
 		
-		rpm_v[0] = cmd[2];
-		rpm_v[1] = cmd[1];
-		rpm = (unsigned int)((uint16_t)rpm_v[0]|((uint16_t)rpm_v[1] << 8));
-		rt_kprintf("rpm :%d\n", rpm);
-		for(int i =0; i<8; i++){
-			rt_kprintf("cmd :0x%02X, rpm :%d\n", cmd[i], rpm_v);
-		}
-		SendCanDataPage(&TxMessage, cmd, WheelRTR, Motor1IDE, 0xfff, 0x18ff2100, WheelDLC); //
-		rt_thread_delay(500); 
-		/*
 		if (num == 2) {
       // WheelEnableAll();
       // rt_kprintf("22222%d %d\n",LRSpeed[0],LRSpeed[1]);
@@ -1147,7 +1080,7 @@ static void Sbus_thread_entry(void* parameter) {
     } else {
       rt_kprintf("输入错误！\n");
     }
-*/
+
 		
     //		WheelSpeedSet(&SBUS_CH);
     rt_thread_delay(1); // 在main函数运行开启线程的时候需要线程让出CPU资源，保证cpu可以运行开启后面的线程。
