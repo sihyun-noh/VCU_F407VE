@@ -69,6 +69,12 @@ extern "C" {
 #define D0_EN_AXIS1_ONLY   (0x02u) /*10*/
 #define D0_EN_BOTH_ENABLE  (0x03u) /*11*/
 
+/* Default motor driver command configuration */
+#define MOTOR_DRV_DEFAULT_ENABLE_BITS \
+  (D0_EN_BOTH_ENABLE | D0_AIXS1_SPEED_MODE | D0_AIXS2_SPEED_MODE)
+#define MOTOR_DRV_DEFAULT_AXIS1_ACC (0x64u)
+#define MOTOR_DRV_DEFAULT_AXIS2_ACC (0x64u)
+
 /* ===================== Types ===================== */
 typedef enum {
   SRC_NONE = 0,

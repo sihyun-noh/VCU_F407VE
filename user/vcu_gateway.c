@@ -115,7 +115,8 @@ struct {
   rc_intent_t rc;
   upper_intent_t upper_cmd_config;
   upper_intent_rpm_t upper_cmd_rpm;
-  motor_cmd_t motor_cmd;
+  motor_cmd_t motor_cmd_left;
+  motor_cmd_t motor_cmd_right;
 
   motor_status_t motor_left;
   motor_status_t motor_right;
@@ -600,17 +601,14 @@ static void fsm_thread_entry(void* parameter) {
     // out_st.axis1_cmd = out_cmd.rpm_axis1;
     // out_st.axis2_cmd = out_cmd.rpm_axis2;
 
-    /*motor driver1 bit mask*/
-    /* some to bit mask*/
-    /* TODO*/
-    out_cmd_left.enable_bit |= D0_EN_BOTH_ENABLE;
-    // out_cmd.enable_bit |= D0_RESET_EN;
-    // out_cmd.enable_bit |= D0_SLIDE_EN;
-    out_cmd_left.enable_bit |= D0_AIXS1_SPEED_MODE;
-    out_cmd_left.enable_bit |= D0_AIXS2_SPEED_MODE;
+    /* Apply same default driver configuration to left/right. */
+    out_cmd_left.enable_bit |= MOTOR_DRV_DEFAULT_ENABLE_BITS;
+    out_cmd_right.enable_bit |= MOTOR_DRV_DEFAULT_ENABLE_BITS;
 
-    out_cmd_left.axis1_accel_bit = 0x64;
-    out_cmd_left.axis2_accel_bit = 0x64;
+    out_cmd_left.axis1_accel_bit = MOTOR_DRV_DEFAULT_AXIS1_ACC;
+    out_cmd_left.axis2_accel_bit = MOTOR_DRV_DEFAULT_AXIS2_ACC;
+    out_cmd_right.axis1_accel_bit = MOTOR_DRV_DEFAULT_AXIS1_ACC;
+    out_cmd_right.axis2_accel_bit = MOTOR_DRV_DEFAULT_AXIS2_ACC;
 
     /* Build feedback payloads for upper (100ms TX in can_thread). */
     upper_status_rpm_t out_rpm_st;
@@ -647,7 +645,8 @@ static void fsm_thread_entry(void* parameter) {
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-    g_latest.motor_cmd = out_cmd_left;
+    g_latest.motor_cmd_left = out_cmd_left;
+    g_latest.motor_cmd_right = out_cmd_right;
     g_latest.upper_rpm_st = out_rpm_st;
     g_latest.upper_vcu_st = out_st;
     rt_mutex_release(g_lock);
@@ -704,12 +703,14 @@ static void can_thread_entry(void* parameter) {
     if (dt_ms >= CAN_TX_PERIOD_MS) {
       last_tx = now;
 
-      motor_cmd_t cmd;
+      motor_cmd_t cmd_left;
+      motor_cmd_t cmd_right;
       upper_status_t st;
       upper_status_rpm_t st_rpm;
 
       rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-      cmd = g_latest.motor_cmd;
+      cmd_left = g_latest.motor_cmd_left;
+      cmd_right = g_latest.motor_cmd_right;
       st = g_latest.upper_vcu_st;
       st_rpm = g_latest.upper_rpm_st;
       rt_mutex_release(g_lock);
@@ -717,10 +718,10 @@ static void can_thread_entry(void* parameter) {
       uint8_t d0[8], d1[8];
 
       /* Driver 1 real operation(run signal)*/
-      pack_motor_cmd(&cmd, d0);
+      pack_motor_cmd(&cmd_left, d0);
       (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER1_TX, d0, 8);
       /* Driver 2 real operation(run signal)*/
-      pack_motor_cmd(&cmd, d0);
+      pack_motor_cmd(&cmd_right, d0);
       (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER2_TX, d0, 8);
 
       /* send vcu status to upper */
@@ -767,8 +768,10 @@ int vcu_gateway_init(void) {
   /* init shared structs to safe defaults */
   rt_mutex_take(g_lock, RT_WAITING_FOREVER);
   memset(&g_latest, 0, sizeof(g_latest));
-  g_latest.motor_cmd.type = CMD_STOP;
-  g_latest.motor_cmd.src = SRC_NONE;
+  g_latest.motor_cmd_left.type = CMD_STOP;
+  g_latest.motor_cmd_left.src = SRC_NONE;
+  g_latest.motor_cmd_right.type = CMD_STOP;
+  g_latest.motor_cmd_right.src = SRC_NONE;
   rt_mutex_release(g_lock);
 
   /* threads */
