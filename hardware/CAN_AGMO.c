@@ -103,20 +103,21 @@ bool can_send_ext(uint32_t ext_id, const uint8_t data[8], uint8_t dlc) {
   // TODO: choose CAN1/CAN2 and add retry/mailbox-full handling if needed
   Mail_Box = CAN_Transmit(CAN1, &TxMessage);
 
-  if (Mail_Box != CAN_TxStatus_NoMailBox) {
-
-    while (CAN_TransmitStatus(CAN1, Mail_Box) != CAN_TxStatus_Ok) {
-      success_cut++;
-      rt_thread_delay(100);
-      if (success_cut > 10)
-        break;
-      rt_kprintf("CAN1_Transmit Statues error! \n");
-    };
-    return false;
-  } else {
-
+  if (Mail_Box == CAN_TxStatus_NoMailBox) {
     // rt_kprintf("no mail_box !\n");
+    return false;
   }
+
+  while (CAN_TransmitStatus(CAN1, Mail_Box) != CAN_TxStatus_Ok) {
+    success_cut++;
+    rt_thread_delay(100);
+    if (success_cut > 10) {
+      Mail_Box = 0;
+      return false;
+    }
+    rt_kprintf("CAN1_Transmit Statues error! \n");
+  };
+
   Mail_Box = 0;
   return true;
 }
