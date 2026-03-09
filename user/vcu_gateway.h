@@ -9,12 +9,13 @@ extern "C" {
 #endif
 
 /* ===================== IDs / Periods ===================== */
-#define CANID_UPPER_STATUS_TX     0x18FF0100u /* upper status TX (temporary) */
-#define CANID_UPPER_STATUS_RPM_TX 0x18FF0100u /* upper rpm status TX (temporary) */
-#define CANID_MOTOR_STATUS_RX     0x18FF0021u /* motor driver status RX */
+#define CANID_UPPER_STATUS_RPM_TX   0x18FF0300u /* upper feedback: motor driver status */
+#define CANID_UPPER_STATUS_TX       0x18FF0310u /* upper feedback: vcu gateway status */
+#define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
+#define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0031u /* motor driver status right RX */
 
-#define CANID_UPPER_CMD_RX         0x18FF0200u /* TODO: set to real upper->gateway cmd ID */
-#define CANID_UPPER_CMD_RPM_RX     0x18FF0210u /* TODO: set to real rpm upper->gateway cmd ID */
+#define CANID_UPPER_CMD_RPM_RX     0x18FF0200u /* TODO: set to real rpm upper->gateway cmd ID */
+#define CANID_UPPER_CMD_RX         0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
 #define CANID_MOTOR_CMD_DRIVER1_TX 0x18FF2100u /* TODO: set to real gateway->motor cmd ID */
 #define CANID_MOTOR_CMD_DRIVER2_TX 0x18FF2200u /* TODO: set to real gateway->motor cmd ID */
 
@@ -25,6 +26,24 @@ extern "C" {
 #define UPPER_TIMEOUT_MS 500u
 #define MOTOR_TIMEOUT_MS 500u
 #define SBUS_TIMEOUT_MS  1000u
+
+/* RC status bit mask */
+#define RC_ST_ENABLE          (1u << 0) /* rc_enable */
+#define RC_ST_EMERGENCY_STOP  (1u << 1) /* rc_emergency_stop */
+#define RC_ST_FAILSAFE        (1u << 2) /* failsafe */
+#define RC_ST_FRESH           (1u << 3) /* SBUS freshness */
+#define RC_ST_CULTIVATOR_DOWN (1u << 4) /* cultivator_down */
+#define RC_ST_CULTIVATOR_ON   (1u << 5) /* cultivator_on */
+
+/* VCU FSM status bit mask */
+#define VCU_ST_SRC_NONE        (1u << 0) /* control source: none */
+#define VCU_ST_SRC_RC          (1u << 1) /* control source: RC */
+#define VCU_ST_SRC_UPPER       (1u << 2) /* control source: upper */
+#define VCU_ST_STOP_UPPER      (1u << 3) /* stop reason: upper force stop */
+#define VCU_ST_STOP_RC_EMG     (1u << 4) /* stop reason: RC emergency */
+#define VCU_ST_STOP_MOTOR_FAULT (1u << 5) /* stop reason: motor fault */
+#define VCU_ST_STOP_TIMEOUT    (1u << 6) /* stop reason: timeout */
+#define VCU_ST_RUNNING         (1u << 7) /* setpoint control running */
 
 /*Data bit masks */
 #define D0_ENABLE_MASK      (0x03u)   /*bit1:0*/

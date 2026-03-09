@@ -84,9 +84,11 @@ typedef struct {
 
 typedef struct {
   rt_tick_t ts;
-  uint8_t control_src;    /* 0 stop, 1 RC, 2 Upper */
-  uint8_t stop_reason;    /* 0 none, 1 upper_force, 2 rc_emg, 3 motor_fault, 4 timeout */
-  uint8_t flags;          /* bit0 rc_enable, bit1 rc_emg, bit2 upper_force */
+  uint8_t control_src;          /* 0 stop, 1 RC, 2 Upper */
+  uint8_t stop_reason;          /* 0 none, 1 upper_force, 2 rc_emg, 3 motor_fault, 4 timeout */
+  uint8_t rc_status_mask;       /* RC status bit mask */
+  uint8_t vcu_fsm_status_mask;  /* VCU FSM status bit mask */
+  int16_t power_supply_value;   /* data[0:1] for 0x18FF0310 */
   uint8_t md_left_fault_msg;  /* motor driver left */
   uint8_t md_right_fault_msg; /* motor driver right */
   uint8_t relay_st;       /* Bit mask */
@@ -287,8 +289,8 @@ static bool decode_upper_rpm_cmd(const can_frame_t* rx, upper_intent_rpm_t* out)
 }
 
 /* Motor status RX: 0x18FF0021 (adjust to your motor status layout) */
-static bool decode_motor_status(const can_frame_t* rx, motor_status_t* out) {
-  if (rx->ext_id != CANID_MOTOR_STATUS_RX)
+static bool decode_motor_status(const can_frame_t* rx, uint32_t expect_id, motor_status_t* out) {
+  if (rx->ext_id != expect_id)
     return false;
 
   memset(out, 0, sizeof(*out));
@@ -323,15 +325,19 @@ static void pack_motor_cmd(const motor_cmd_t* cmd, uint8_t out[8]) {
   out[7] = (uint8_t)(0x00);
 }
 
-/* Upper status TX 0x18FF0300 (8 bytes, temporary compact format) */
+/* Upper status TX 0x18FF0310 (gateway status) */
 static void pack_upper_status(const upper_status_t* st, uint8_t out[8]) {
   memset(out, 0, 8);
-  out[0] = st->control_src;
-  out[1] = st->stop_reason;
-  out[2] = st->flags;
+  pack_int16_hi_lo(st->power_supply_value, &out[0], &out[1]);
+  out[2] = st->md_left_fault_msg;
+  out[3] = st->md_right_fault_msg;
+  out[4] = st->rc_status_mask;
+  out[5] = st->vcu_fsm_status_mask;
+  out[6] = st->relay_st;
+  out[7] = 0x00;
 }
 
-/* Upper status rpm TX 0x18FF0310 (8 bytes, temporary compact format) */
+/* Upper status rpm TX 0x18FF0300 (motor driver feedback) */
 static void pack_upper_status_rpm(const upper_status_rpm_t* rpm_fb, uint8_t out[8]) {
   memset(out, 0, 8);
 
@@ -484,20 +490,26 @@ static void fsm_thread_entry(void* parameter) {
     memset(&out_st, 0, sizeof(out_st));
     out_st.ts = now;
 
-    out_st.flags = 0;
+    out_st.rc_status_mask = 0;
     if (rc.rc_enable)
-      out_st.flags |= (1u << 0);
+      out_st.rc_status_mask |= RC_ST_ENABLE;
     if (rc.rc_emergency_stop)
-      out_st.flags |= (1u << 1);
-    if (upper_force_stop)
-      out_st.flags |= (1u << 2);
+      out_st.rc_status_mask |= RC_ST_EMERGENCY_STOP;
+    if (rc.failsafe)
+      out_st.rc_status_mask |= RC_ST_FAILSAFE;
+    if (rc_ok)
+      out_st.rc_status_mask |= RC_ST_FRESH;
+    if (rc.cultivator_down)
+      out_st.rc_status_mask |= RC_ST_CULTIVATOR_DOWN;
+    if (rc.cultivator_on)
+      out_st.rc_status_mask |= RC_ST_CULTIVATOR_ON;
 
-		/* rc status mapping */
-		out_st.
-		
-		/* motor driver status mapping */
+    /* motor driver status mapping */
     out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
     out_st.md_right_fault_msg = (uint8_t)(motor_right_st.fault_bits & 0xFF);
+    out_st.relay_st = upper.relay_mask;
+    out_st.power_supply_value =
+        (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, CMD_MIN, CMD_MAX);
 
     /* STOP conditions (highest priority) */
     if (upper_force_stop) {
@@ -546,10 +558,8 @@ static void fsm_thread_entry(void* parameter) {
         // out_cmd.rpm_axis1 = rc.axis1; out_cmd.rpm_axis2 = rc.axis2;
         /* Left/right value drives both wheels on each side with same command. */
         
-				out_cmd_left.rpm_axis1 = rc.left_rpm_value;
-				/*test*/
-				//out_cmd_left.rpm_axis2 = rc.left_rpm_value;
-        out_cmd_left.rpm_axis2 = rc.right_rpm_value;
+        out_cmd_left.rpm_axis1 = rc.left_rpm_value;
+        out_cmd_left.rpm_axis2 = rc.left_rpm_value;
 				
         out_cmd_right.rpm_axis1 = rc.right_rpm_value;
         out_cmd_right.rpm_axis2 = rc.right_rpm_value;
@@ -610,10 +620,43 @@ static void fsm_thread_entry(void* parameter) {
     out_cmd_left.axis1_accel_bit = 0x64;
     out_cmd_left.axis2_accel_bit = 0x64;
 
+    /* Build feedback payloads for upper (100ms TX in can_thread). */
+    upper_status_rpm_t out_rpm_st;
+    memset(&out_rpm_st, 0, sizeof(out_rpm_st));
+    out_rpm_st.ts = now;
+    out_rpm_st.driver_left_axis1_rpm =
+        (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_left_axis2_rpm =
+        (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_right_axis1_rpm =
+        (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_right_axis2_rpm =
+        (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, CMD_MIN, CMD_MAX);
+
+    out_st.vcu_fsm_status_mask = 0;
+    if (out_st.control_src == 0)
+      out_st.vcu_fsm_status_mask |= VCU_ST_SRC_NONE;
+    else if (out_st.control_src == 1)
+      out_st.vcu_fsm_status_mask |= VCU_ST_SRC_RC;
+    else if (out_st.control_src == 2)
+      out_st.vcu_fsm_status_mask |= VCU_ST_SRC_UPPER;
+
+    if (out_cmd_left.type == CMD_SETPOINT)
+      out_st.vcu_fsm_status_mask |= VCU_ST_RUNNING;
+
+    if (out_st.stop_reason == 1)
+      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_UPPER;
+    else if (out_st.stop_reason == 2)
+      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_RC_EMG;
+    else if (out_st.stop_reason == 3)
+      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_MOTOR_FAULT;
+    else if (out_st.stop_reason == 4)
+      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_TIMEOUT;
+
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     g_latest.motor_cmd = out_cmd_left;
-
+    g_latest.upper_rpm_st = out_rpm_st;
     g_latest.upper_vcu_st = out_st;
     rt_mutex_release(g_lock);
   }
@@ -647,7 +690,7 @@ static void can_thread_entry(void* parameter) {
 
       /* motor driver left status */
       motor_status_t ms_left;
-      if (decode_motor_status(&rx, &ms_left)) {
+      if (decode_motor_status(&rx, CANID_MOTOR_STATUS_LEFT_RX, &ms_left)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
         g_latest.motor_left = ms_left;
         rt_mutex_release(g_lock);
@@ -655,7 +698,7 @@ static void can_thread_entry(void* parameter) {
       }
       /* motor driver right status */
       motor_status_t ms_right;
-      if (decode_motor_status(&rx, &ms_right)) {
+      if (decode_motor_status(&rx, CANID_MOTOR_STATUS_RIGHT_RX, &ms_right)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
         g_latest.motor_right = ms_right;
         rt_mutex_release(g_lock);
@@ -694,7 +737,7 @@ static void can_thread_entry(void* parameter) {
 
       /* send driver left & right feedback rpm data to upper */
       pack_upper_status_rpm(&st_rpm, d1);
-      (void)can_hw_send_ext(CANID_UPPER_STATUS_TX, d1, 8);
+      (void)can_hw_send_ext(CANID_UPPER_STATUS_RPM_TX, d1, 8);
     }
 
     rt_thread_delay(1);
