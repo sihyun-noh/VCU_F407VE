@@ -105,7 +105,7 @@ bool can_send_ext(uint32_t ext_id, const uint8_t data[8], uint8_t dlc) {
   Mail_Box = CAN_Transmit(CAN1, &TxMessage);
 
   if (Mail_Box == CAN_TxStatus_NoMailBox) {
-    // rt_kprintf("no mail_box !\n");
+     rt_kprintf("no mail_box !\n");
     return false;
   }
 

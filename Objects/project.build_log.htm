@@ -32,16 +32,20 @@ user\vcu_gateway.c(366): warning:  #177-D: variable "cmd"  was declared but neve
     uint8_t cmd[8] = { 0 };
 user\vcu_gateway.c(201): warning:  #177-D: function "make_can_payload_from_sbus"  was declared but never referenced
   static void make_can_payload_from_sbus(int16_t sbus_data, uint8_t data[8]) {
-user\vcu_gateway.c(244): warning:  #177-D: function "decode_upper_cmd"  was declared but never referenced
-  static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
-user\vcu_gateway.c(274): warning:  #177-D: function "decode_upper_rpm_cmd"  was declared but never referenced
-  static bool decode_upper_rpm_cmd(const can_frame_t* rx, upper_intent_rpm_t* out) {
-user\vcu_gateway.c: 4 warnings, 0 errors
+user\vcu_gateway.c: 2 warnings, 0 errors
+compiling CAN_AGMO.c...
+hardware\IO_10_Out.h(10): warning:  #1-D: last line of file ends without a newline
+  #endif
+hardware\can.h(54): warning:  #1295-D: Deprecated declaration Init_CAN1 - give arg types
+  void Init_CAN1();
+hardware\CAN_AGMO.c(49): warning:  #550-D: variable "g_can_tx_mq_inited"  was set but never used
+  static rt_bool_t g_can_tx_mq_inited = RT_FALSE;
+hardware\CAN_AGMO.c: 3 warnings, 0 errors
 linking...
-Program Size: Code=21800 RO-data=796 RW-data=300 ZI-data=11196  
+Program Size: Code=22108 RO-data=796 RW-data=300 ZI-data=11452  
 FromELF: creating hex file...
 After Build - User command #1: fromelf --bin --output ./Objects/project.bin ./Objects/project.axf
-".\Objects\project.axf" - 0 Error(s), 4 Warning(s).
+".\Objects\project.axf" - 0 Error(s), 5 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -53,7 +57,7 @@ Package Vendor: Keil
 <h2>Collection of Component include folders:</h2>
 
 <h2>Collection of Component Files used:</h2>
-Build Time Elapsed:  00:00:04
+Build Time Elapsed:  00:00:05
 </pre>
 </body>
 </html>

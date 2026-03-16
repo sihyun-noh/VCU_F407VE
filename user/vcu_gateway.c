@@ -730,7 +730,8 @@ static void can_tx_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
-
+		
+		//rt_kprintf("send CAN msg !\n");
     /* Driver 1 real operation(run signal)*/
     pack_motor_cmd(&cmd_left, d0);
     (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER1_TX, d0, 8);
@@ -788,7 +789,7 @@ int vcu_gateway_init(void) {
   /* threads */
   rt_thread_t th;
 
-  th = rt_thread_create("sbus", sbus_thread_entry, RT_NULL, 2048, 18, 10);
+  th = rt_thread_create("sbus", sbus_thread_entry, RT_NULL, 1024, 18, 10);
   if (th)
     rt_thread_startup(th);
 
@@ -796,11 +797,11 @@ int vcu_gateway_init(void) {
   if (th)
     rt_thread_startup(th);
 
-  th = rt_thread_create("canrx", can_rx_thread_entry, RT_NULL, 2048, 15, 10);
+  th = rt_thread_create("canrx", can_rx_thread_entry, RT_NULL, 1024, 15, 10);
   if (th)
     rt_thread_startup(th);
 
-  th = rt_thread_create("cantx", can_tx_thread_entry, RT_NULL, 2048, 17, 10);
+  th = rt_thread_create("cantx", can_tx_thread_entry, RT_NULL, 1024, 17, 10);
   if (th)
     rt_thread_startup(th);
 
