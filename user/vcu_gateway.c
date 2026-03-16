@@ -667,17 +667,13 @@ static void fsm_thread_entry(void* parameter) {
   }
 }
 
-/* 3) CAN thread: RX parse + TX periodic(100ms) */
-static void can_thread_entry(void* parameter) {
+/* 3-1) CAN RX thread: parse RX frames as fast as possible */
+static void can_rx_thread_entry(void* parameter) {
   (void)parameter;
 
-  rt_tick_t last_tx = now_tick();
-
   for (;;) {
-    /* 1) RX handling: poll MQ (non-blocking) */
     can_frame_t rx;
-    while (rt_mq_recv(g_can_rx_mq, &rx, sizeof(rx), 0) == RT_EOK) {
-		
+    if (rt_mq_recv(g_can_rx_mq, &rx, sizeof(rx), RT_WAITING_FOREVER) == RT_EOK) {
       upper_intent_t up;
       if (decode_upper_cmd(&rx, &up)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
@@ -711,44 +707,44 @@ static void can_thread_entry(void* parameter) {
         continue;
       }
     }
+  }
+}
 
-    /* 2) TX periodic: 100ms */
-    rt_tick_t now = now_tick();
-    uint32_t dt_ms = (uint32_t)((now - last_tx) * 1000 / RT_TICK_PER_SECOND);
-    if (dt_ms >= CAN_TX_PERIOD_MS) {
-      last_tx = now;
+/* 3-2) CAN TX thread: periodic 100ms transmit */
+static void can_tx_thread_entry(void* parameter) {
+  (void)parameter;
 
-      motor_cmd_t cmd_left;
-      motor_cmd_t cmd_right;
-      upper_status_t st;
-      upper_status_rpm_t st_rpm;
+  for (;;) {
+    rt_thread_delay(CAN_TX_PERIOD_MS);
 
-      rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-      cmd_left = g_latest.motor_cmd_left;
-      cmd_right = g_latest.motor_cmd_right;
-      st = g_latest.upper_vcu_st;
-      st_rpm = g_latest.upper_rpm_st;
-      rt_mutex_release(g_lock);
+    motor_cmd_t cmd_left;
+    motor_cmd_t cmd_right;
+    upper_status_t st;
+    upper_status_rpm_t st_rpm;
 
-      uint8_t d0[8], d1[8];
+    rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+    cmd_left = g_latest.motor_cmd_left;
+    cmd_right = g_latest.motor_cmd_right;
+    st = g_latest.upper_vcu_st;
+    st_rpm = g_latest.upper_rpm_st;
+    rt_mutex_release(g_lock);
 
-      /* Driver 1 real operation(run signal)*/
-      pack_motor_cmd(&cmd_left, d0);
-      (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER1_TX, d0, 8);
-      /* Driver 2 real operation(run signal)*/
-      pack_motor_cmd(&cmd_right, d0);
-      (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER2_TX, d0, 8);
+    uint8_t d0[8], d1[8];
 
-      /* send vcu status to upper */
-      pack_upper_status(&st, d1);
-      (void)can_hw_send_ext(CANID_UPPER_STATUS_TX, d1, 8);
+    /* Driver 1 real operation(run signal)*/
+    pack_motor_cmd(&cmd_left, d0);
+    (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER1_TX, d0, 8);
+    /* Driver 2 real operation(run signal)*/
+    pack_motor_cmd(&cmd_right, d0);
+    (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER2_TX, d0, 8);
 
-      /* send driver left & right feedback rpm data to upper */
-      pack_upper_status_rpm(&st_rpm, d1);
-      (void)can_hw_send_ext(CANID_UPPER_STATUS_RPM_TX, d1, 8);
-    }
+    /* send vcu status to upper */
+    pack_upper_status(&st, d1);
+    (void)can_hw_send_ext(CANID_UPPER_STATUS_TX, d1, 8);
 
-    rt_thread_delay(1);
+    /* send driver left & right feedback rpm data to upper */
+    pack_upper_status_rpm(&st_rpm, d1);
+    (void)can_hw_send_ext(CANID_UPPER_STATUS_RPM_TX, d1, 8);
   }
 }
 
@@ -800,7 +796,11 @@ int vcu_gateway_init(void) {
   if (th)
     rt_thread_startup(th);
 
-  th = rt_thread_create("can", can_thread_entry, RT_NULL, 2048, 17, 10);
+  th = rt_thread_create("canrx", can_rx_thread_entry, RT_NULL, 2048, 15, 10);
+  if (th)
+    rt_thread_startup(th);
+
+  th = rt_thread_create("cantx", can_tx_thread_entry, RT_NULL, 2048, 17, 10);
   if (th)
     rt_thread_startup(th);
 

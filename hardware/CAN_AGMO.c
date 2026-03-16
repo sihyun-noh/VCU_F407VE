@@ -50,7 +50,8 @@ static rt_bool_t g_can_tx_mq_inited = RT_FALSE;
 rt_mq_t g_can_rx_mq = RT_NULL; // rx mq handler
 static rt_bool_t g_can_rx_mq_inited = RT_FALSE;
 
-static uint8_t can_mq_pool[CAN_MQ_DEPTH * sizeof(can_msg_t)];
+static uint8_t can_tx_mq_pool[CAN_MQ_DEPTH * sizeof(can_msg_t)];
+static uint8_t can_rx_mq_pool[CAN_MQ_DEPTH * sizeof(can_msg_t)];
 
 static CanRxMsg RxMessage;
 static CanTxMsg TxMessage;
@@ -65,7 +66,7 @@ rt_mq_t can_rx_mq_get(void) {
 }
 
 int can_mq_init(void) {
-  if (rt_mq_init(&can_tx_mq, "can_tx", can_mq_pool, sizeof(can_msg_t), sizeof(can_mq_pool), RT_IPC_FLAG_FIFO) !=
+  if (rt_mq_init(&can_tx_mq, "can_tx", can_tx_mq_pool, sizeof(can_msg_t), sizeof(can_tx_mq_pool), RT_IPC_FLAG_FIFO) !=
       RT_EOK) {
     return -1;
   } else {
@@ -73,7 +74,7 @@ int can_mq_init(void) {
     g_can_tx_mq_inited = RT_TRUE;
   }
 
-  if (rt_mq_init(&can_rx_mq, "can_rx", can_mq_pool, sizeof(can_msg_t), sizeof(can_mq_pool), RT_IPC_FLAG_FIFO) !=
+  if (rt_mq_init(&can_rx_mq, "can_rx", can_rx_mq_pool, sizeof(can_msg_t), sizeof(can_rx_mq_pool), RT_IPC_FLAG_FIFO) !=
       RT_EOK) {
     return -1;
   } else {
@@ -86,8 +87,8 @@ int can_mq_init(void) {
 
 // StdPeriph send (Extended ID)
 bool can_send_ext(uint32_t ext_id, const uint8_t data[8], uint8_t dlc) {
-
-  int success_cut = 0;
+  int retry = 0;
+  uint8_t tx_status = CAN_TxStatus_Failed;
   // SendCanDataPage(&TxMessage, data, WheelRTR, Motor1IDE, 0xfff, 0x18ff2100, WheelDLC); //
 
   memset(&TxMessage, 0, sizeof(TxMessage));
@@ -108,18 +109,22 @@ bool can_send_ext(uint32_t ext_id, const uint8_t data[8], uint8_t dlc) {
     return false;
   }
 
-  while (CAN_TransmitStatus(CAN1, Mail_Box) != CAN_TxStatus_Ok) {
-    success_cut++;
-    rt_thread_delay(100);
-    if (success_cut > 10) {
+  /* Keep wait short to avoid blocking RX handling for long periods. */
+  for (retry = 0; retry < 3; retry++) {
+    tx_status = CAN_TransmitStatus(CAN1, Mail_Box);
+    if (tx_status == CAN_TxStatus_Ok) {
+      Mail_Box = 0;
+      return true;
+    }
+    if (tx_status == CAN_TxStatus_Failed) {
       Mail_Box = 0;
       return false;
     }
-    rt_kprintf("CAN1_Transmit Statues error! \n");
-  };
+    rt_thread_delay(1);
+  }
 
   Mail_Box = 0;
-  return true;
+  return false;
 }
 
 /*
