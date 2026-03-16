@@ -99,6 +99,15 @@ typedef enum {
 int vcu_gateway_init(void);
 
 /**
+ * @brief  Differential drive mixer for test and runtime use.
+ * @param  throttle  Forward/backward command.
+ * @param  steering  Left/right steering command.
+ * @param  left      Output command for left side.
+ * @param  right     Output command for right side.
+ */
+void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right);
+
+/**
  * @brief  Push a received CAN frame from ISR context into the Gateway CAN RX message queue.
  * @note   Call this function inside CAN RX interrupt handler (e.g., CAN1_RX0_IRQHandler).
  * @param  ext_id  Extended CAN ID.

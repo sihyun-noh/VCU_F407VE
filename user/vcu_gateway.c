@@ -187,10 +187,22 @@ static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
   return value;
 }
 
-static void make_diff_drive_rpm(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
-  int32_t l = (int32_t)throttle + (int32_t)steering;
-  int32_t r = (int32_t)throttle - (int32_t)steering;
+void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
+  int32_t t = (int32_t)throttle;
+  int32_t s = (int32_t)steering;
+  int32_t t_abs = (t >= 0) ? t : -t;
+  int32_t s_abs = (s >= 0) ? s : -s;
 
+  if (!left || !right)
+    return;
+
+  /* If throttle is not zero, steering is capped to avoid direction reversal. */
+  if (t != 0 && s_abs > t_abs) {
+    s = (s >= 0) ? t_abs : -t_abs;
+  }
+
+  int32_t l = t + s;
+  int32_t r = t - s;
   l = clamp_i32(l, CMD_MIN, CMD_MAX);
   r = clamp_i32(r, CMD_MIN, CMD_MAX);
 
@@ -432,7 +444,7 @@ static void sbus_thread_entry(void* parameter) {
          * CH3 = throttle (forward/backward)
          * CH1 = steering (left/right)
          */
-        make_diff_drive_rpm(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+        vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
 
     // rc.axis1 = (int16_t)((int32_t)ch[1] - 992); /* CH2 */
     // rc.axis2 = (int16_t)((int32_t)ch[3] - 992); /* CH4 */
