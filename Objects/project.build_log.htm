@@ -27,45 +27,21 @@ Project File Date:  03/01/2026
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 7 (build 960)', folder: 'C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\Bin'
 Build target 'Target 1'
-compiling CAN.c...
-hardware\IO_10_Out.h(10): warning:  #1-D: last line of file ends without a newline
-  #endif
-hardware\CAN.h(54): warning:  #1295-D: Deprecated declaration Init_CAN1 - give arg types
-  void Init_CAN1();
-hardware\CAN.c(153): warning:  #61-D: integer operation result is out of range
-  	uint32_t id_1 = (0x18ff0200 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(153): warning:  #68-D: integer conversion resulted in a change of sign
-  	uint32_t id_1 = (0x18ff0200 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(169): warning:  #61-D: integer operation result is out of range
-  	uint32_t id_2 = (0x18ff0200 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(169): warning:  #68-D: integer conversion resulted in a change of sign
-  	uint32_t id_2 = (0x18ff0200 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(184): warning:  #61-D: integer operation result is out of range
-  	uint32_t id_3 = (0x18ff0021 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(184): warning:  #68-D: integer conversion resulted in a change of sign
-  	uint32_t id_3 = (0x18ff0021 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(200): warning:  #61-D: integer operation result is out of range
-  	uint32_t id_4 = (0x18ff0031 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(200): warning:  #68-D: integer conversion resulted in a change of sign
-  	uint32_t id_4 = (0x18ff0031 << 3) | CAN_ID_EXT | CAN_RTR_Data;
-hardware\CAN.c(356): warning:  #186-D: pointless comparison of unsigned integer with zero
-    } else if (speed >= 0 && speed <= 127) {
-hardware\CAN.c(564): warning:  #940-D: missing return statement at end of non-void function "bsp_motor1_thread" 
-  }
-hardware\CAN.c(637): warning:  #940-D: missing return statement at end of non-void function "SendCanDataPage" 
-  }
-hardware\CAN.c(1108): warning:  #940-D: missing return statement at end of non-void function "bsp_Sbus_thread" 
-  }
-hardware\CAN.c(878): warning:  #550-D: variable "speed_0"  was set but never used
-  static int speed_0 = 0;
-hardware\CAN.c(879): warning:  #550-D: variable "speed_1"  was set but never used
-  static int speed_1 = 0;
-hardware\CAN.c: 16 warnings, 0 errors
+compiling vcu_gateway.c...
+user\vcu_gateway.c(366): warning:  #177-D: variable "cmd"  was declared but never referenced
+    uint8_t cmd[8] = { 0 };
+user\vcu_gateway.c(201): warning:  #177-D: function "make_can_payload_from_sbus"  was declared but never referenced
+  static void make_can_payload_from_sbus(int16_t sbus_data, uint8_t data[8]) {
+user\vcu_gateway.c(244): warning:  #177-D: function "decode_upper_cmd"  was declared but never referenced
+  static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
+user\vcu_gateway.c(274): warning:  #177-D: function "decode_upper_rpm_cmd"  was declared but never referenced
+  static bool decode_upper_rpm_cmd(const can_frame_t* rx, upper_intent_rpm_t* out) {
+user\vcu_gateway.c: 4 warnings, 0 errors
 linking...
-Program Size: Code=22008 RO-data=796 RW-data=300 ZI-data=11180  
+Program Size: Code=21800 RO-data=796 RW-data=300 ZI-data=11196  
 FromELF: creating hex file...
 After Build - User command #1: fromelf --bin --output ./Objects/project.bin ./Objects/project.axf
-".\Objects\project.axf" - 0 Error(s), 16 Warning(s).
+".\Objects\project.axf" - 0 Error(s), 4 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -77,7 +53,7 @@ Package Vendor: Keil
 <h2>Collection of Component include folders:</h2>
 
 <h2>Collection of Component Files used:</h2>
-Build Time Elapsed:  00:00:05
+Build Time Elapsed:  00:00:04
 </pre>
 </body>
 </html>

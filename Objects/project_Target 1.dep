@@ -2948,7 +2948,7 @@ I (.\hardware\CAN_AGMO.h)(0x69AA5A18)
 I (C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\include\stdbool.h)(0x5E8E2EB2)
 I (.\hardware\SBUS_AGMO.h)(0x69AC434D)
 I (.\Internet\spi.h)(0x65E17C02)
-I (user\vcu_gateway.h)(0x69AE586D)
+I (user\vcu_gateway.h)(0x69AE6A30)
 F (.\user\stm32f4xx_conf.h)(0x53DBA5BC)()
 F (.\user\stm32f4xx_it.c)(0x69A6E360)(--c99 -c --cpu Cortex-M4.fp.sp -D__MICROLIB -g -O1 --apcs=interwork --split_sections -I .\hardware -I .\library -I .\start -I .\user -I .\system -I .\rtthread\3.0.3\include -I .\rtthread\3.0.3\include\libc -I .\rtthread\3.0.3\components\finsh -I .\Internet-IC:\Users\User\AppData\Local\Arm\Packs\Keil\STM32F4xx_DFP\3.1.1\Device\Include-D__UVISION_VERSION="540" -DSTM32F407xx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER-o .\objects\stm32f4xx_it.o --omf_browse .\objects\stm32f4xx_it.crf --depend .\objects\stm32f4xx_it.d)
 I (user\stm32f4xx_it.h)(0x53DBAA48)
@@ -3017,7 +3017,7 @@ I (.\hardware\IO_10_Out.h)(0x65AB5F5A)
 I (.\hardware\SBUS_AGMO.h)(0x69AC434D)
 I (C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\include\stdbool.h)(0x5E8E2EB2)
 I (.\hardware\CAN_AGMO.h)(0x69AA5A18)
-I (user\vcu_gateway.h)(0x69AE586D)
+I (user\vcu_gateway.h)(0x69AE6A30)
 F (.\user\stm32f4xx_it.h)(0x53DBAA48)()
 F (.\user\main.h)(0x69A43843)()
 F (.\user\board.h)(0x697B7F3E)()
@@ -3115,7 +3115,7 @@ I (C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\include\stdbool.h)(
 I (.\hardware\SBUS_AGMO.h)(0x69AC434D)
 I (.\Internet\spi.h)(0x65E17C02)
 F (.\user\rtconfig.h)(0x69A44D06)()
-F (.\user\vcu_gateway.c)(0x69AE586E)(--c99 -c --cpu Cortex-M4.fp.sp -D__MICROLIB -g -O1 --apcs=interwork --split_sections -I .\hardware -I .\library -I .\start -I .\user -I .\system -I .\rtthread\3.0.3\include -I .\rtthread\3.0.3\include\libc -I .\rtthread\3.0.3\components\finsh -I .\Internet-IC:\Users\User\AppData\Local\Arm\Packs\Keil\STM32F4xx_DFP\3.1.1\Device\Include-D__UVISION_VERSION="540" -DSTM32F407xx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER-o .\objects\vcu_gateway.o --omf_browse .\objects\vcu_gateway.crf --depend .\objects\vcu_gateway.d)
+F (.\user\vcu_gateway.c)(0x69B7C971)(--c99 -c --cpu Cortex-M4.fp.sp -D__MICROLIB -g -O1 --apcs=interwork --split_sections -I .\hardware -I .\library -I .\start -I .\user -I .\system -I .\rtthread\3.0.3\include -I .\rtthread\3.0.3\include\libc -I .\rtthread\3.0.3\components\finsh -I .\Internet-IC:\Users\User\AppData\Local\Arm\Packs\Keil\STM32F4xx_DFP\3.1.1\Device\Include-D__UVISION_VERSION="540" -DSTM32F407xx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER-o .\objects\vcu_gateway.o --omf_browse .\objects\vcu_gateway.crf --depend .\objects\vcu_gateway.d)
 I (.\rtthread\3.0.3\include\rtthread.h)(0x5C1C44DC)
 I (.\user\rtconfig.h)(0x69A44D06)
 I (.\rtthread\3.0.3\include\rtdebug.h)(0x5C1C44DC)
@@ -3136,7 +3136,7 @@ I (.\rtthread\3.0.3\include\rtservice.h)(0x5C1C44DC)
 I (.\rtthread\3.0.3\include\rtm.h)(0x5C1C4236)
 I (C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\include\stdbool.h)(0x5E8E2EB2)
 I (C:\Users\User\AppData\Local\Keil_v5\ARM\ARM_Compiler_5_06\include\string.h)(0x5E8E2EB2)
-I (user\vcu_gateway.h)(0x69AE586D)
+I (user\vcu_gateway.h)(0x69AE6A30)
 I (.\library\stm32f4xx_can.h)(0x53DBA19E)
 I (.\start\stm32f4xx.h)(0x65B071BC)
 I (.\start\core_cm4.h)(0x65D56836)
@@ -3172,7 +3172,7 @@ I (.\library\stm32f4xx_dcmi.h)(0x53DBA19E)
 I (.\library\stm32f4xx_fsmc.h)(0x53DBA19E)
 I (.\hardware\SBUS_AGMO.h)(0x69AC434D)
 I (.\hardware\CAN_AGMO.h)(0x69AA5A18)
-F (.\user\vcu_gateway.h)(0x69AE586D)()
+F (.\user\vcu_gateway.h)(0x69AE6A30)()
 F (.\system\dac.c)(0x6620C9BE)(--c99 -c --cpu Cortex-M4.fp.sp -D__MICROLIB -g -O1 --apcs=interwork --split_sections -I .\hardware -I .\library -I .\start -I .\user -I .\system -I .\rtthread\3.0.3\include -I .\rtthread\3.0.3\include\libc -I .\rtthread\3.0.3\components\finsh -I .\Internet-IC:\Users\User\AppData\Local\Arm\Packs\Keil\STM32F4xx_DFP\3.1.1\Device\Include-D__UVISION_VERSION="540" -DSTM32F407xx -DSTM32F40_41xxx -DUSE_STDPERIPH_DRIVER-o .\objects\dac.o --omf_browse .\objects\dac.crf --depend .\objects\dac.d)
 I (system\dac.h)(0x654AEF6E)
 I (.\start\stm32f4xx.h)(0x65B071BC)

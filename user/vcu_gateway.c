@@ -677,6 +677,7 @@ static void can_thread_entry(void* parameter) {
     /* 1) RX handling: poll MQ (non-blocking) */
     can_frame_t rx;
     while (rt_mq_recv(g_can_rx_mq, &rx, sizeof(rx), 0) == RT_EOK) {
+		
       upper_intent_t up;
       if (decode_upper_cmd(&rx, &up)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
