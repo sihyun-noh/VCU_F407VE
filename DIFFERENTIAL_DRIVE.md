@@ -17,7 +17,12 @@
 - `left = throttle + steering`
 - `right = throttle - steering`
 
-계산 후 안전하게 아래 범위로 클램프한다.
+추가 보호 로직(현재 구현):
+- `throttle != 0`일 때 `|steering| > |throttle|`이면 `steering`을 `±|throttle|`로 제한
+- 목적: 주행 중 한쪽 바퀴가 반대 방향으로 뒤집히는 상황 방지
+- `throttle == 0`일 때는 제자리 회전 허용
+
+계산 후 아래 범위로 클램프한다.
 - `left  in [CMD_MIN, CMD_MAX]`
 - `right in [CMD_MIN, CMD_MAX]`
 
@@ -28,13 +33,13 @@
 - `int16_t left_rpm_value`
 - `int16_t right_rpm_value`
 
-### (2) 믹싱 함수 추가
-- `make_diff_drive_rpm(int16_t throttle, int16_t steering, int16_t* left, int16_t* right)`
+### (2) 믹싱 함수(외부 테스트 가능)
+- `vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right)`
 
 ### (3) `sbus_thread_entry()`에서 값 생성
 - `throttle = rc.axis3` (`CH3`)
 - `steering = rc.axis1` (`CH1`)
-- `make_diff_drive_rpm(throttle, steering, &rc.left_rpm_value, &rc.right_rpm_value)`
+- `vcu_diff_drive_mix(throttle, steering, &rc.left_rpm_value, &rc.right_rpm_value)`
 
 ### (4) FSM RC 분기에서 모터 명령 적용
 - 좌측 드라이버:
@@ -70,3 +75,4 @@
 - CH3만 조작 시 좌/우 같은 방향/같은 크기
 - CH1만 조작 시 좌/우 반대 방향
 - 최대 입력에서 클램프 정상 동작
+- 주행 중(`throttle != 0`)에는 바퀴 반전이 발생하지 않는지 확인

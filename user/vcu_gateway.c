@@ -187,6 +187,21 @@ static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
   return value;
 }
 
+/* Differential-drive mixer (current behavior)
+ * 1) Base mix:
+ *    left  = throttle + steering
+ *    right = throttle - steering
+ *
+ * 2) Direction-reversal guard while driving:
+ *    If throttle != 0, steering magnitude is capped to |throttle|.
+ *    => During forward/backward driving, one side will not flip to reverse.
+ *
+ * 3) In-place turn is allowed:
+ *    If throttle == 0, steering cap is not applied.
+ *
+ * 4) Final output clamp:
+ *    left/right are clamped to [CMD_MIN, CMD_MAX].
+ */
 void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
   int32_t t = (int32_t)throttle;
   int32_t s = (int32_t)steering;
@@ -196,7 +211,7 @@ void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16
   if (!left || !right)
     return;
 
-  /* If throttle is not zero, steering is capped to avoid direction reversal. */
+  /* While moving, limit steering to prevent one side from reversing direction. */
   if (t != 0 && s_abs > t_abs) {
     s = (s >= 0) ? t_abs : -t_abs;
   }

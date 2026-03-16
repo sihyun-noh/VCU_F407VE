@@ -107,6 +107,13 @@
 
 ## 9) 기타 반영
 - `can_send_ext()` 성공/실패 반환 로직 정상화(성공 시 `true`, 실패 시 `false`)
+- CAN RX/TX 처리 성능 개선
+  - `canrx`/`cantx` 스레드 분리 (RX 우선 처리)
+  - `can_send_ext()` 블로킹 대기 축소(짧은 재시도)
+  - CAN TX/RX MQ 메모리 풀 분리
+- 테스트용 차동 믹서 API 공개
+  - `vcu_diff_drive_mix(throttle, steering, &left, &right)`
+  - 주행 중 스티어링 제한(`|steering| <= |throttle|`) 로직 포함
 - `.gitignore` 추가
   - `Objects/`
   - `JLinkLog.txt`
@@ -117,3 +124,4 @@
 ## 10) 현재 확인 필요 포인트
 - `power supply`를 left 기준으로 보낼지, left/right 평균/최소값 정책으로 보낼지 확정 필요
 - `automation(data[6])` 사용처(FSM/상태 비트 반영 여부) 정책 확정 필요
+- CAN TX 실패 시 재전송 정책(현재는 짧은 재시도 후 실패 반환) 확정 필요
