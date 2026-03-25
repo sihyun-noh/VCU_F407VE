@@ -31,10 +31,10 @@ typedef struct {
   bool rc_emergency_stop; /* emergency stop */
   bool cultivator_down;
   bool cultivator_on;
-  int16_t axis1; /* rc Right stick up/down */
-  int16_t axis2; /* rc Right stick left/right */
-  int16_t axis3; /* rc Left stick up/down */
-  int16_t axis4; /* rc Left stick left/right */
+  int16_t axis1;           /* rc Right stick up/down */
+  int16_t axis2;           /* rc Right stick left/right */
+  int16_t axis3;           /* rc Left stick up/down */
+  int16_t axis4;           /* rc Left stick left/right */
   int16_t left_rpm_value;  /* differential mix result for left motor */
   int16_t right_rpm_value; /* differential mix result for right motor */
   bool failsafe;
@@ -84,14 +84,14 @@ typedef struct {
 
 typedef struct {
   rt_tick_t ts;
-  uint8_t control_src;          /* 0 stop, 1 RC, 2 Upper */
-  uint8_t stop_reason;          /* 0 none, 1 upper_force, 2 rc_emg, 3 motor_fault, 4 timeout */
-  uint8_t rc_status_mask;       /* RC status bit mask */
-  uint8_t vcu_fsm_status_mask;  /* VCU FSM status bit mask */
-  int16_t power_supply_value;   /* data[0:1] for 0x18FF0310 */
-  uint8_t md_left_fault_msg;  /* motor driver left */
-  uint8_t md_right_fault_msg; /* motor driver right */
-  uint8_t relay_st;       /* Bit mask */
+  uint8_t control_src;         /* 0 stop, 1 RC, 2 Upper */
+  uint8_t stop_reason;         /* 0 none, 1 upper_force, 2 rc_emg, 3 motor_fault, 4 timeout */
+  uint8_t rc_status_mask;      /* RC status bit mask */
+  uint8_t vcu_fsm_status_mask; /* VCU FSM status bit mask */
+  int16_t power_supply_value;  /* data[0:1] for 0x18FF0310 */
+  uint8_t md_left_fault_msg;   /* motor driver left */
+  uint8_t md_right_fault_msg;  /* motor driver right */
+  uint8_t relay_st;            /* Bit mask */
 
 } upper_status_t;
 
@@ -142,8 +142,6 @@ static inline bool is_fresh_tick(rt_tick_t now, rt_tick_t ts, uint32_t timeout_m
   uint32_t dt_ms = (uint32_t)(dt * 1000 / RT_TICK_PER_SECOND);
   return dt_ms < timeout_ms;
 }
-
-
 
 int16_t rpm_a;
 SBUS_CH_DATA sbus_data_raw_a;
@@ -206,88 +204,237 @@ static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
 void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
   int32_t t = (int32_t)throttle;
   int32_t s = (int32_t)steering;
-	//int32_t t = (int32_t)steering;
-  //int32_t s = (int32_t)throttle;
-	int32_t t_abs, s_abs;
-	int32_t outer, inner;
-	
-	
-  //int32_t t_abs = (t >= 0) ? t : -t;
-  //int32_t s_abs = (s >= 0) ? s : -s;  
-  
-	t_abs = (t >= 0) ? t : -t;
+  // int32_t t = (int32_t)steering;
+  // int32_t s = (int32_t)throttle;
+  int32_t t_abs, s_abs;
+  int32_t outer, inner;
+
+  // int32_t t_abs = (t >= 0) ? t : -t;
+  // int32_t s_abs = (s >= 0) ? s : -s;
+
+  t_abs = (t >= 0) ? t : -t;
   s_abs = (s <= 0) ? -s : s;
-	
-	//rt_kprintf("streeing data : %d! \n", s);
-	//rt_kprintf("throttle data : %d! \n", t);
-	//rt_kprintf("t_abs data : %d! \n", t_abs);
-	//rt_kprintf("s_abs data : %d! \n", s_abs);
-	
+
+  // rt_kprintf("streeing data : %d! \n", s);
+  // rt_kprintf("throttle data : %d! \n", t);
+  // rt_kprintf("t_abs data : %d! \n", t_abs);
+  // rt_kprintf("s_abs data : %d! \n", s_abs);
+
   if (!left || !right)
     return;
-/*
-	int32_t l;
-	int32_t r;
-  // While moving, limit steering to prevent one side from reversing direction.
-  if (t != 0 && s_abs > t_abs) {
-		s = (s >= 0) ? t_abs  : -t_abs;		
-	}
-	
-		l = t + s;
-		r = t - s;
 
-		
-	if(t !=0){
-		int32_t l_abs = (l >=0) ? l : -l;
-		int32_t r_abs = (r >=0) ? r : -r;
-		int32_t max_abs = (l_abs > r_abs) ? l_abs : r_abs;
-		if(max_abs > t_abs && max_abs > 0){
-		l = (l * t_abs) / max_abs;
-		r = (r * t_abs) / max_abs;	
-		}
-	}
-	
-	
-  l = clamp_i32(l, CMD_MIN, CMD_MAX);
-  r = clamp_i32(r, CMD_MIN, CMD_MAX);
+  if (t_abs > 0 && s_abs > t_abs)
+    s_abs = t_abs;
 
-  *left = (int16_t)l;
-  *right = (int16_t)r;
-	*/
-	
-	if(t_abs > 0 && s_abs > t_abs)
-		s_abs = t_abs;
-	
-	if(t == 0){
-	//rt_kprintf("streeing data : %d! \n", s);
-	*left = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);
-	*right = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);	
-	return;
-	}
-	
-	outer = t;
-	//t=400
-	//s_abs = 100
-	// (400 * (400 - 100)) / 400
-	
-	inner = (t * (t_abs - s_abs)) / t_abs;
-	//inner = (t * (t_abs + s_abs)) / t_abs;
+  if (t == 0) {
+    // rt_kprintf("streeing data : %d! \n", s);
+    *left = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);
+    *right = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);
+    return;
+  }
 
-	//rt_kprintf("outer data : %d! \n", outer);
-	//rt_kprintf("inner data : %d! \n", inner);
-	
-	
-	if(s < 0){
-	*right = (int16_t)clamp_i32(-outer, CMD_MIN, CMD_MAX);
-	*left = (int16_t)clamp_i32(inner, CMD_MIN, CMD_MAX);
-	}else if(s > 0){
-	*left = (int16_t)clamp_i32(outer, CMD_MIN, CMD_MAX);
-	*right = (int16_t)clamp_i32(-inner, CMD_MIN, CMD_MAX);
-	}else{
-	*left = (int16_t)clamp_i32(t, CMD_MIN, CMD_MAX);
-	*right = (int16_t)clamp_i32(-t, CMD_MIN, CMD_MAX);
-	}
-	
+  outer = t;
+  // t=400
+  // s_abs = 100
+  //  (400 * (400 - 100)) / 400
+
+  inner = (t * (t_abs - s_abs)) / t_abs;
+  // inner = (t * (t_abs + s_abs)) / t_abs;
+
+  // rt_kprintf("outer data : %d! \n", outer);
+  // rt_kprintf("inner data : %d! \n", inner);
+
+  if (s < 0) {
+    *right = (int16_t)clamp_i32(-outer, CMD_MIN, CMD_MAX);
+    *left = (int16_t)clamp_i32(inner, CMD_MIN, CMD_MAX);
+  } else if (s > 0) {
+    *left = (int16_t)clamp_i32(outer, CMD_MIN, CMD_MAX);
+    *right = (int16_t)clamp_i32(-inner, CMD_MIN, CMD_MAX);
+  } else {
+    *left = (int16_t)clamp_i32(t, CMD_MIN, CMD_MAX);
+    *right = (int16_t)clamp_i32(-t, CMD_MIN, CMD_MAX);
+  }
+}
+
+/* ===================== RC Mixer (4WD Differential) ===================== */
+/* [CONST] */
+#define RCM_TRACK_WIDTH_M      (1.0f)
+#define RCM_WHEELBASE_M        (1.5f)
+#define RCM_WHEEL_DIAMETER_M   (0.36f)
+#define RCM_MAX_RC_INPUT       (500.0f)
+#define RCM_MAX_DRIVER_INPUT   (664.0f)
+#define RCM_MAX_SPEED_KMH      (5.0f) /* throttle=500 -> 5 km/h */
+
+/* [TUNE] */
+#define RCM_DEADBAND_THROTTLE              (10.0f)
+#define RCM_DEADBAND_STEERING              (10.0f)
+#define RCM_STEERING_GAIN                  (1.0f)
+#define RCM_LEFT_GAIN                      (1.0f)
+#define RCM_RIGHT_GAIN                     (1.0f)
+#define RCM_HIGH_SPEED_THROTTLE_THRESHOLD  (350.0f)
+#define RCM_MAX_STEERING_AT_HIGH_SPEED     (250.0f)
+
+typedef struct {
+  /* [INPUT] */
+  float throttle;
+  float steering;
+} RcInput;
+
+typedef struct {
+  /* [CONST] */
+  float track_width_m;
+  float wheelbase_m;
+  float wheel_diameter_m;
+  float max_rc_input;
+  float max_driver_input;
+} VehicleConfig;
+
+typedef struct {
+  /* [TUNE] */
+  float deadband_throttle;
+  float deadband_steering;
+  float steering_gain;
+  float left_gain;
+  float right_gain;
+  float high_speed_throttle_threshold;
+  float max_steering_at_high_speed;
+} TuneConfig;
+
+typedef struct {
+  /* [CALC] */
+  float center_input;
+  float beta;
+  float radius_m;
+  float yaw_rate_rad_s;
+  float yaw_rate_deg_s;
+  float left_input_raw;
+  float right_input_raw;
+  float left_input_final;
+  float right_input_final;
+} CalcState;
+
+typedef struct {
+  /* [OUTPUT] */
+  int16_t left_input;
+  int16_t right_input;
+} MotorOutput;
+
+static const VehicleConfig g_rcm_vehicle = {
+  RCM_TRACK_WIDTH_M,
+  RCM_WHEELBASE_M,
+  RCM_WHEEL_DIAMETER_M,
+  RCM_MAX_RC_INPUT,
+  RCM_MAX_DRIVER_INPUT
+};
+
+static const TuneConfig g_rcm_tune = {
+  RCM_DEADBAND_THROTTLE,
+  RCM_DEADBAND_STEERING,
+  RCM_STEERING_GAIN,
+  RCM_LEFT_GAIN,
+  RCM_RIGHT_GAIN,
+  RCM_HIGH_SPEED_THROTTLE_THRESHOLD,
+  RCM_MAX_STEERING_AT_HIGH_SPEED
+};
+
+static float clamp_f32(float v, float lo, float hi) {
+  if (v < lo)
+    return lo;
+  if (v > hi)
+    return hi;
+  return v;
+}
+
+static float apply_deadband_f32(float v, float deadband) {
+  if (v > -deadband && v < deadband)
+    return 0.0f;
+  return v;
+}
+
+/* [CALC] saturation by common ratio scaling */
+static void scale_to_limit(float* left, float* right, float limit_abs) {
+  float l_abs, r_abs, max_abs, scale;
+  if (!left || !right || limit_abs <= 0.0f)
+    return;
+
+  l_abs = (*left >= 0.0f) ? *left : -(*left);
+  r_abs = (*right >= 0.0f) ? *right : -(*right);
+  max_abs = (l_abs > r_abs) ? l_abs : r_abs;
+  if (max_abs <= limit_abs || max_abs <= 0.0f)
+    return;
+
+  scale = limit_abs / max_abs;
+  *left *= scale;
+  *right *= scale;
+}
+
+/* [CALC] core RC mix function */
+static MotorOutput mix_rc_to_tracks(const RcInput* in, const VehicleConfig* cfg, const TuneConfig* tune, CalcState* st) {
+  float throttle, steering, throttle_abs;
+  float center_input, beta;
+  float left_raw, right_raw;
+  float left_final, right_final;
+  float speed_kmh, vc_m_s;
+  MotorOutput out = { 0, 0 };
+
+  if (!in || !cfg || !tune)
+    return out;
+
+  /* [INPUT] */
+  throttle = clamp_f32(in->throttle, -cfg->max_rc_input, cfg->max_rc_input);
+  steering = clamp_f32(in->steering, -cfg->max_rc_input, cfg->max_rc_input);
+
+  /* [TUNE] */
+  throttle = apply_deadband_f32(throttle, tune->deadband_throttle);
+  steering = apply_deadband_f32(steering, tune->deadband_steering);
+
+  throttle_abs = (throttle >= 0.0f) ? throttle : -throttle;
+  if (throttle_abs >= tune->high_speed_throttle_threshold) {
+    steering = clamp_f32(steering, -tune->max_steering_at_high_speed, tune->max_steering_at_high_speed);
+  }
+
+  steering = clamp_f32(steering * tune->steering_gain, -cfg->max_rc_input, cfg->max_rc_input);
+
+  /* [CALC] base formula */
+  center_input = cfg->max_driver_input * (throttle / cfg->max_rc_input);
+  beta = steering / cfg->max_rc_input;
+  left_raw = center_input * (1.0f + beta);
+  right_raw = center_input * (1.0f - beta);
+
+  left_final = left_raw * tune->left_gain;
+  right_final = right_raw * tune->right_gain;
+
+  /* [OUTPUT] saturation */
+  scale_to_limit(&left_final, &right_final, cfg->max_driver_input);
+  left_final = clamp_f32(left_final, -cfg->max_driver_input, cfg->max_driver_input);
+  right_final = clamp_f32(right_final, -cfg->max_driver_input, cfg->max_driver_input);
+
+  out.left_input = (int16_t)left_final;
+  out.right_input = (int16_t)right_final;
+
+  if (st) {
+    float beta_abs;
+    st->center_input = center_input;
+    st->beta = beta;
+
+    if (beta == 0.0f) {
+      st->radius_m = 0.0f; /* straight */
+    } else {
+      beta_abs = (beta >= 0.0f) ? beta : -beta;
+      st->radius_m = (cfg->track_width_m * 0.5f) / beta_abs;
+    }
+
+    speed_kmh = RCM_MAX_SPEED_KMH * (throttle / cfg->max_rc_input);
+    vc_m_s = speed_kmh / 3.6f;
+    st->yaw_rate_rad_s = (2.0f * vc_m_s * beta) / cfg->track_width_m;
+    st->yaw_rate_deg_s = st->yaw_rate_rad_s * 57.2957795f;
+    st->left_input_raw = left_raw;
+    st->right_input_raw = right_raw;
+    st->left_input_final = left_final;
+    st->right_input_final = right_final;
+  }
+
+  return out;
 }
 
 static void make_can_payload_from_sbus(int16_t sbus_data, uint8_t data[8]) {
@@ -508,23 +655,34 @@ static void sbus_thread_entry(void* parameter) {
     rc.failsafe = failsafe;
 
     /* TODO: map channels properly */
-		rc.cultivator_down = (ch.CH5 > 1000);
-		rc.cultivator_on = (ch.CH6 > 1000);
-    rc.rc_emergency_stop = (ch.CH8 > 1000); 
-		rc.rc_enable = (ch.CH9 > 1000);         
-   
+    rc.cultivator_down = (ch.CH5 > 1000);
+    rc.cultivator_on = (ch.CH6 > 1000);
+    rc.rc_emergency_stop = (ch.CH8 > 1000);
+    rc.rc_enable = (ch.CH9 > 1000);
 
     /* axis mapping example (center=992 assumption) */
-        rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 */
-        rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 */
-        rc.axis3 = sbus_convert_to_control(ch.CH3, rpm_v); /* CH3 */
-        rc.axis4 = sbus_convert_to_control(ch.CH4, rpm_v); /* CH4 */
+    rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 */
+    rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 */
+    rc.axis3 = sbus_convert_to_control(ch.CH3, rpm_v); /* CH3 */
+    rc.axis4 = sbus_convert_to_control(ch.CH4, rpm_v); /* CH4 */
 
-        /* Differential drive:
-         * CH3 = throttle (forward/backward)
-         * CH1 = steering (left/right)
-         */
-        vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+    /* Differential drive:
+     * CH3 = throttle (forward/backward)
+     * CH1 = steering (left/right)
+     */
+    vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+    {
+      RcInput in;
+      CalcState calc_state;
+      MotorOutput out;
+      memset(&calc_state, 0, sizeof(calc_state));
+      in.throttle = (float)rc.axis3;
+      in.steering = (float)rc.axis1;
+      out = mix_rc_to_tracks(&in, &g_rcm_vehicle, &g_rcm_tune, &calc_state);
+      rc.left_rpm_value = out.left_input;
+      rc.right_rpm_value = out.right_input;
+      (void)calc_state; /* available for debug/logging if needed */
+    }
 
     // rc.axis1 = (int16_t)((int32_t)ch[1] - 992); /* CH2 */
     // rc.axis2 = (int16_t)((int32_t)ch[3] - 992); /* CH4 */
@@ -562,8 +720,10 @@ static void fsm_thread_entry(void* parameter) {
     bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
 
     /* motor driver status check */
-    bool motor_left_ok = motor_left_st.valid && is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS) && (motor_left_st.fault_bits == 0);
-    bool motor_right_ok = motor_right_st.valid && is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS) && (motor_right_st.fault_bits == 0);
+    bool motor_left_ok = motor_left_st.valid && is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS) &&
+                         (motor_left_st.fault_bits == 0);
+    bool motor_right_ok = motor_right_st.valid && is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS) &&
+                          (motor_right_st.fault_bits == 0);
 
     bool upper_force_stop = upper.upper_force_stop;
     bool rc_emg = rc.rc_emergency_stop;
@@ -601,8 +761,7 @@ static void fsm_thread_entry(void* parameter) {
     out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
     out_st.md_right_fault_msg = (uint8_t)(motor_right_st.fault_bits & 0xFF);
     out_st.relay_st = upper.relay_mask;
-    out_st.power_supply_value =
-        (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, CMD_MIN, CMD_MAX);
+    out_st.power_supply_value = (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, CMD_MIN, CMD_MAX);
 
     /* STOP conditions (highest priority) */
     if (upper_force_stop) {
@@ -650,10 +809,10 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_SETPOINT;
         // out_cmd.rpm_axis1 = rc.axis1; out_cmd.rpm_axis2 = rc.axis2;
         /* Left/right value drives both wheels on each side with same command. */
-        
+
         out_cmd_left.rpm_axis1 = rc.left_rpm_value;
         out_cmd_left.rpm_axis2 = rc.left_rpm_value;
-				
+
         out_cmd_right.rpm_axis1 = rc.right_rpm_value;
         out_cmd_right.rpm_axis2 = rc.right_rpm_value;
 
@@ -720,14 +879,10 @@ static void fsm_thread_entry(void* parameter) {
     upper_status_rpm_t out_rpm_st;
     memset(&out_rpm_st, 0, sizeof(out_rpm_st));
     out_rpm_st.ts = now;
-    out_rpm_st.driver_left_axis1_rpm =
-        (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, CMD_MIN, CMD_MAX);
-    out_rpm_st.driver_left_axis2_rpm =
-        (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, CMD_MIN, CMD_MAX);
-    out_rpm_st.driver_right_axis1_rpm =
-        (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, CMD_MIN, CMD_MAX);
-    out_rpm_st.driver_right_axis2_rpm =
-        (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_left_axis1_rpm = (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_left_axis2_rpm = (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_right_axis1_rpm = (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_right_axis2_rpm = (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, CMD_MIN, CMD_MAX);
 
     out_st.vcu_fsm_status_mask = 0;
     if (out_st.control_src == 0)
@@ -822,8 +977,8 @@ static void can_tx_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
-		
-		//rt_kprintf("send CAN msg !\n");
+
+    // rt_kprintf("send CAN msg !\n");
     /* Driver 1 real operation(run signal)*/
     pack_motor_cmd(&cmd_left, d0);
     (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER1_TX, d0, 8);
