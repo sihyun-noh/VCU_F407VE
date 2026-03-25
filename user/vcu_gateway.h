@@ -2,6 +2,7 @@
 #define _VCU_GATEWAY_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "stm32f4xx_can.h"
 
 #ifdef __cplusplus
@@ -22,6 +23,7 @@ extern "C" {
 /* ===================== IDs / Periods ===================== */
 #define CANID_UPPER_STATUS_RPM_TX   0x18FF0300u /* upper feedback: motor driver status */
 #define CANID_UPPER_STATUS_TX       0x18FF0310u /* upper feedback: vcu gateway status */
+#define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF0320u /* upper feedback: vehicle motion status */
 #define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
 #define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0020u /* motor driver status right RX */
 
@@ -91,6 +93,21 @@ typedef enum {
   CMD_SETPOINT = 1,
 } cmd_type_t;
 
+typedef struct {
+  uint32_t ts_tick; /* update tick */
+  bool valid;
+  int16_t left_driver_input;
+  int16_t right_driver_input;
+  float yaw_deg_0_360;
+  float yaw_rate_deg_s;
+  float left_speed_m_s;
+  float right_speed_m_s;
+  float center_speed_m_s;
+  float left_distance_m;
+  float right_distance_m;
+  float center_distance_m;
+} vcu_motion_monitor_t;
+
 /**
  * @brief  Initialize the VCU Gateway module.
  * @note   This can be registered with RT-Thread INIT_APP_EXPORT as well.
@@ -117,6 +134,13 @@ void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16
 void gateway_can_rx_push_isr(uint32_t ext_id, const uint8_t data[8], uint8_t dlc);
 
 void gateway_can_rx_push_isr_from_rxmsg(const CanRxMsg* rx);
+
+/**
+ * @brief  Get latest differential-drive motion monitor snapshot.
+ * @param  out  Destination pointer.
+ * @return 0 on success, negative on error.
+ */
+int vcu_gateway_get_motion_monitor(vcu_motion_monitor_t* out);
 
 #ifdef __cplusplus
 }

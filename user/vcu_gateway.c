@@ -122,6 +122,7 @@ struct {
   motor_status_t motor_right;
   upper_status_t upper_vcu_st;
   upper_status_rpm_t upper_rpm_st;
+  vcu_motion_monitor_t motion_monitor;
 } g_latest;
 
 static rt_mutex_t g_lock = RT_NULL;
@@ -177,6 +178,14 @@ static inline void pack_int16_hi_lo(int16_t v, uint8_t* hi, uint8_t* lo) {
   uint16_t u = (uint16_t)v;
   *hi = (uint8_t)(u >> 8);
   *lo = (uint8_t)(u & 0xFF);
+}
+
+static inline int16_t clamp_to_i16(int32_t v) {
+  if (v > 32767)
+    return 32767;
+  if (v < -32768)
+    return -32768;
+  return (int16_t)v;
 }
 
 static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
@@ -337,6 +346,9 @@ static const TuneConfig g_rcm_tune = {
   RCM_MAX_STEERING_AT_HIGH_SPEED
 };
 
+#define PI_F (3.1415926f)
+#define DRIVER_INPUT_TO_RPM_SCALE (0.1f) /* driver input ~= rpm * 10 */
+
 static float clamp_f32(float v, float lo, float hi) {
   if (v < lo)
     return lo;
@@ -349,6 +361,53 @@ static float apply_deadband_f32(float v, float deadband) {
   if (v > -deadband && v < deadband)
     return 0.0f;
   return v;
+}
+
+static void update_motion_monitor(vcu_motion_monitor_t* mon, rt_tick_t now_tick_value, int16_t left_input,
+                                  int16_t right_input) {
+  float left_rpm, right_rpm;
+  float wheel_circumference_m;
+  float left_speed, right_speed, center_speed;
+  float yaw_rate_rad_s, yaw_rate_deg_s;
+  float dt_s = 0.0f;
+
+  if (!mon)
+    return;
+
+  if (mon->valid && mon->ts_tick != 0 && now_tick_value > (rt_tick_t)mon->ts_tick)
+    dt_s = (float)(now_tick_value - (rt_tick_t)mon->ts_tick) / (float)RT_TICK_PER_SECOND;
+  else
+    dt_s = (float)FSM_PERIOD_MS / 1000.0f;
+
+  left_rpm = (float)left_input * DRIVER_INPUT_TO_RPM_SCALE;
+  right_rpm = (float)right_input * DRIVER_INPUT_TO_RPM_SCALE;
+  wheel_circumference_m = PI_F * RCM_WHEEL_DIAMETER_M;
+
+  left_speed = (left_rpm * wheel_circumference_m) / 60.0f;
+  right_speed = (right_rpm * wheel_circumference_m) / 60.0f;
+  center_speed = 0.5f * (left_speed + right_speed);
+
+  yaw_rate_rad_s = (right_speed - left_speed) / RCM_TRACK_WIDTH_M;
+  yaw_rate_deg_s = yaw_rate_rad_s * 57.2957795f;
+
+  mon->left_distance_m += left_speed * dt_s;
+  mon->right_distance_m += right_speed * dt_s;
+  mon->center_distance_m += center_speed * dt_s;
+
+  mon->yaw_deg_0_360 += yaw_rate_deg_s * dt_s;
+  while (mon->yaw_deg_0_360 >= 360.0f)
+    mon->yaw_deg_0_360 -= 360.0f;
+  while (mon->yaw_deg_0_360 < 0.0f)
+    mon->yaw_deg_0_360 += 360.0f;
+
+  mon->left_driver_input = left_input;
+  mon->right_driver_input = right_input;
+  mon->left_speed_m_s = left_speed;
+  mon->right_speed_m_s = right_speed;
+  mon->center_speed_m_s = center_speed;
+  mon->yaw_rate_deg_s = yaw_rate_deg_s;
+  mon->ts_tick = (uint32_t)now_tick_value;
+  mon->valid = true;
 }
 
 /* [CALC] saturation by common ratio scaling */
@@ -612,6 +671,38 @@ static void pack_upper_status_rpm(const upper_status_rpm_t* rpm_fb, uint8_t out[
   */
 }
 
+/* Upper vehicle status TX 0x18FF0320 (motion monitor snapshot)
+ * data[0:1] : yaw_deg_0_360 * 10
+ * data[2:3] : yaw_rate_deg_s * 10
+ * data[4:5] : left_speed_m_s * 100
+ * data[6:7] : right_speed_m_s * 100
+ */
+static void pack_upper_vehicle_status(const vcu_motion_monitor_t* mon, uint8_t out[8]) {
+  int16_t yaw_x10, yaw_rate_x10, left_spd_x100, right_spd_x100;
+  float yaw = 0.0f;
+  if (!mon) {
+    memset(out, 0, 8);
+    return;
+  }
+
+  memset(out, 0, 8);
+  yaw = mon->yaw_deg_0_360;
+  while (yaw >= 360.0f)
+    yaw -= 360.0f;
+  while (yaw < 0.0f)
+    yaw += 360.0f;
+
+  yaw_x10 = clamp_to_i16((int32_t)(yaw * 10.0f));
+  yaw_rate_x10 = clamp_to_i16((int32_t)(mon->yaw_rate_deg_s * 10.0f));
+  left_spd_x100 = clamp_to_i16((int32_t)(mon->left_speed_m_s * 100.0f));
+  right_spd_x100 = clamp_to_i16((int32_t)(mon->right_speed_m_s * 100.0f));
+
+  pack_int16_hi_lo(yaw_x10, &out[0], &out[1]);
+  pack_int16_hi_lo(yaw_rate_x10, &out[2], &out[3]);
+  pack_int16_hi_lo(left_spd_x100, &out[4], &out[5]);
+  pack_int16_hi_lo(right_spd_x100, &out[6], &out[7]);
+}
+
 /* ===================== Threads ===================== */
 
 /* 1) SBUS thread: update rc_intent */
@@ -717,6 +808,7 @@ static void fsm_thread_entry(void* parameter) {
   upper_intent_rpm_t upper_rpm;
   motor_status_t motor_left_st;
   motor_status_t motor_right_st;
+  vcu_motion_monitor_t motion_monitor;
 
   for (;;) {
     rt_thread_delay(FSM_PERIOD_MS);
@@ -729,6 +821,7 @@ static void fsm_thread_entry(void* parameter) {
     /* motor driver status */
     motor_left_st = g_latest.motor_left;
     motor_right_st = g_latest.motor_right;
+    motion_monitor = g_latest.motion_monitor;
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
@@ -919,12 +1012,15 @@ static void fsm_thread_entry(void* parameter) {
     else if (out_st.stop_reason == 4)
       out_st.vcu_fsm_status_mask |= VCU_ST_STOP_TIMEOUT;
 
+    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, out_cmd_right.rpm_axis1);
+
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     g_latest.motor_cmd_left = out_cmd_left;
     g_latest.motor_cmd_right = out_cmd_right;
     g_latest.upper_rpm_st = out_rpm_st;
     g_latest.upper_vcu_st = out_st;
+    g_latest.motion_monitor = motion_monitor;
     rt_mutex_release(g_lock);
   }
 }
@@ -983,12 +1079,14 @@ static void can_tx_thread_entry(void* parameter) {
     motor_cmd_t cmd_right;
     upper_status_t st;
     upper_status_rpm_t st_rpm;
+    vcu_motion_monitor_t mon;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     cmd_left = g_latest.motor_cmd_left;
     cmd_right = g_latest.motor_cmd_right;
     st = g_latest.upper_vcu_st;
     st_rpm = g_latest.upper_rpm_st;
+    mon = g_latest.motion_monitor;
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
@@ -1008,7 +1106,21 @@ static void can_tx_thread_entry(void* parameter) {
     /* send driver left & right feedback rpm data to upper */
     pack_upper_status_rpm(&st_rpm, d1);
     (void)can_hw_send_ext(CANID_UPPER_STATUS_RPM_TX, d1, 8);
+
+    /* send vehicle motion status to upper */
+    pack_upper_vehicle_status(&mon, d1);
+    (void)can_hw_send_ext(CANID_UPPER_VEHICLE_STATUS_TX, d1, 8);
   }
+}
+
+int vcu_gateway_get_motion_monitor(vcu_motion_monitor_t* out) {
+  if (!out || g_lock == RT_NULL)
+    return -1;
+
+  rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+  *out = g_latest.motion_monitor;
+  rt_mutex_release(g_lock);
+  return 0;
 }
 
 /* ===================== Init ===================== */
