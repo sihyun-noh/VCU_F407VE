@@ -166,7 +166,7 @@ void Init_CAN1_Filter_AGMO(void) {
   CAN_FilterInit(&CAN_FilterInitStructure);
 	
 	 // upper rpm cmd
-	uint32_t id_2 = (0x18ff0200 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+	uint32_t id_2 = (0x18ff0300 << 3) | CAN_ID_EXT | CAN_RTR_Data;
 
   CAN_FilterInitStructure.CAN_FilterNumber = 1;
                                                 
@@ -197,7 +197,7 @@ void Init_CAN1_Filter_AGMO(void) {
   CAN_FilterInit(&CAN_FilterInitStructure);
 	
 	// motor driver 2 status 
-	uint32_t id_4 = (0x18ff0031 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+	uint32_t id_4 = (0x18ff0020 << 3) | CAN_ID_EXT | CAN_RTR_Data;
 
   CAN_FilterInitStructure.CAN_FilterNumber = 3;
                                                 

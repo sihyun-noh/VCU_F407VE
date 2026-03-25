@@ -202,36 +202,101 @@ static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
  * 4) Final output clamp:
  *    left/right are clamped to [CMD_MIN, CMD_MAX].
  */
+
 void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
   int32_t t = (int32_t)throttle;
   int32_t s = (int32_t)steering;
-  int32_t t_abs = (t >= 0) ? t : -t;
-  int32_t s_abs = (s >= 0) ? s : -s;
-
+	//int32_t t = (int32_t)steering;
+  //int32_t s = (int32_t)throttle;
+	int32_t t_abs, s_abs;
+	int32_t outer, inner;
+	
+	
+  //int32_t t_abs = (t >= 0) ? t : -t;
+  //int32_t s_abs = (s >= 0) ? s : -s;  
+  
+	t_abs = (t >= 0) ? t : -t;
+  s_abs = (s <= 0) ? -s : s;
+	
+	//rt_kprintf("streeing data : %d! \n", s);
+	//rt_kprintf("throttle data : %d! \n", t);
+	//rt_kprintf("t_abs data : %d! \n", t_abs);
+	//rt_kprintf("s_abs data : %d! \n", s_abs);
+	
   if (!left || !right)
     return;
-
-  /* While moving, limit steering to prevent one side from reversing direction. */
+/*
+	int32_t l;
+	int32_t r;
+  // While moving, limit steering to prevent one side from reversing direction.
   if (t != 0 && s_abs > t_abs) {
-    s = (s >= 0) ? t_abs : -t_abs;
-  }
+		s = (s >= 0) ? t_abs  : -t_abs;		
+	}
+	
+		l = t + s;
+		r = t - s;
 
-  int32_t l = t + s;
-  int32_t r = t - s;
+		
+	if(t !=0){
+		int32_t l_abs = (l >=0) ? l : -l;
+		int32_t r_abs = (r >=0) ? r : -r;
+		int32_t max_abs = (l_abs > r_abs) ? l_abs : r_abs;
+		if(max_abs > t_abs && max_abs > 0){
+		l = (l * t_abs) / max_abs;
+		r = (r * t_abs) / max_abs;	
+		}
+	}
+	
+	
   l = clamp_i32(l, CMD_MIN, CMD_MAX);
   r = clamp_i32(r, CMD_MIN, CMD_MAX);
 
   *left = (int16_t)l;
   *right = (int16_t)r;
+	*/
+	
+	if(t_abs > 0 && s_abs > t_abs)
+		s_abs = t_abs;
+	
+	if(t == 0){
+	//rt_kprintf("streeing data : %d! \n", s);
+	*left = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);
+	*right = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);	
+	return;
+	}
+	
+	outer = t;
+	//t=400
+	//s_abs = 100
+	// (400 * (400 - 100)) / 400
+	
+	inner = (t * (t_abs - s_abs)) / t_abs;
+	//inner = (t * (t_abs + s_abs)) / t_abs;
+
+	//rt_kprintf("outer data : %d! \n", outer);
+	//rt_kprintf("inner data : %d! \n", inner);
+	
+	
+	if(s < 0){
+	*right = (int16_t)clamp_i32(-outer, CMD_MIN, CMD_MAX);
+	*left = (int16_t)clamp_i32(inner, CMD_MIN, CMD_MAX);
+	}else if(s > 0){
+	*left = (int16_t)clamp_i32(outer, CMD_MIN, CMD_MAX);
+	*right = (int16_t)clamp_i32(-inner, CMD_MIN, CMD_MAX);
+	}else{
+	*left = (int16_t)clamp_i32(t, CMD_MIN, CMD_MAX);
+	*right = (int16_t)clamp_i32(-t, CMD_MIN, CMD_MAX);
+	}
+	
 }
 
 static void make_can_payload_from_sbus(int16_t sbus_data, uint8_t data[8]) {
   int16_t cmd = sbus_to_cmd(sbus_data);
   data[0] = 0xE3;
   pack_int16_hi_lo(cmd, &data[1], &data[2]);
-  data[3] = 0x64;
+  data[3] = 0x32;
   pack_int16_hi_lo(cmd, &data[4], &data[5]);
-  data[6] = 0x64;
+  data[6] = 0x32;
   data[7] = 0x0;
 }
 

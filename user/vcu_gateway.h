@@ -13,9 +13,9 @@ extern "C" {
 #define SBUS_CENTER 992
 #define SBUS_MAX    1712
 
-#define CMD_MIN    (-500)
+#define CMD_MIN    (-670)
 #define CMD_CENTER (0)
-#define CMD_MAX    (500)
+#define CMD_MAX    (670)
 
 #define DEADBAND 10
 
@@ -23,12 +23,12 @@ extern "C" {
 #define CANID_UPPER_STATUS_RPM_TX   0x18FF0300u /* upper feedback: motor driver status */
 #define CANID_UPPER_STATUS_TX       0x18FF0310u /* upper feedback: vcu gateway status */
 #define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
-#define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0031u /* motor driver status right RX */
+#define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0020u /* motor driver status right RX */
 
 #define CANID_UPPER_CMD_RPM_RX     0x18FF0200u /* TODO: set to real rpm upper->gateway cmd ID */
 #define CANID_UPPER_CMD_RX         0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
-#define CANID_MOTOR_CMD_DRIVER1_TX 0x18FF2100u /* TODO: set to real gateway->motor cmd ID */
-#define CANID_MOTOR_CMD_DRIVER2_TX 0x18FF2200u /* TODO: set to real gateway->motor cmd ID */
+#define CANID_MOTOR_CMD_DRIVER1_TX 0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
+#define CANID_MOTOR_CMD_DRIVER2_TX 0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
 
 #define CAN_TX_PERIOD_MS 100u /* motor cmd + upper status, 100ms */
 #define FSM_PERIOD_MS    10u  /* arbitration tick */
