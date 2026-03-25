@@ -373,6 +373,7 @@ static MotorOutput mix_rc_to_tracks(const RcInput* in, const VehicleConfig* cfg,
   float throttle, steering, throttle_abs;
   float center_input, beta;
   float left_raw, right_raw;
+  float left_logical, right_logical;
   float left_final, right_final;
   float speed_kmh, vc_m_s;
   MotorOutput out = { 0, 0 };
@@ -395,14 +396,28 @@ static MotorOutput mix_rc_to_tracks(const RcInput* in, const VehicleConfig* cfg,
 
   steering = clamp_f32(steering * tune->steering_gain, -cfg->max_rc_input, cfg->max_rc_input);
 
-  /* [CALC] base formula */
+  /* [CALC] base formula on logical track speeds */
   center_input = cfg->max_driver_input * (throttle / cfg->max_rc_input);
   beta = steering / cfg->max_rc_input;
-  left_raw = center_input * (1.0f + beta);
-  right_raw = center_input * (1.0f - beta);
 
-  left_final = left_raw * tune->left_gain;
-  right_final = right_raw * tune->right_gain;
+  if (throttle == 0.0f && steering != 0.0f) {
+    /* In-place rotation: logical left/right are opposite. */
+    float spin = cfg->max_driver_input * (steering / cfg->max_rc_input);
+    left_raw = spin;
+    right_raw = -spin;
+  } else {
+    left_raw = center_input * (1.0f + beta);
+    right_raw = center_input * (1.0f - beta);
+  }
+
+  left_logical = left_raw * tune->left_gain;
+  right_logical = right_raw * tune->right_gain;
+
+  /* Symmetric installation mapping:
+   * driver_right command uses inverted sign of logical right.
+   */
+  left_final = left_logical;
+  right_final = -right_logical;
 
   /* [OUTPUT] saturation */
   scale_to_limit(&left_final, &right_final, cfg->max_driver_input);
@@ -429,7 +444,7 @@ static MotorOutput mix_rc_to_tracks(const RcInput* in, const VehicleConfig* cfg,
     st->yaw_rate_rad_s = (2.0f * vc_m_s * beta) / cfg->track_width_m;
     st->yaw_rate_deg_s = st->yaw_rate_rad_s * 57.2957795f;
     st->left_input_raw = left_raw;
-    st->right_input_raw = right_raw;
+    st->right_input_raw = -right_raw; /* mapped command-side raw */
     st->left_input_final = left_final;
     st->right_input_final = right_final;
   }
