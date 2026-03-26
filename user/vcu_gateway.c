@@ -272,6 +272,10 @@ void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16
 
 static void update_motion_monitor(vcu_motion_monitor_t* mon, rt_tick_t now_tick_value, int16_t left_input,
                                   int16_t right_input) {
+  /* NOTE:
+   * This monitor is currently command-based (out_cmd), not measured-RPM based.
+   * left_input/right_input should be commanded driver inputs.
+   */
   float left_rpm, right_rpm;
   float wheel_circumference_m;
   float left_speed, right_speed, center_speed;
@@ -820,6 +824,10 @@ static void fsm_thread_entry(void* parameter) {
     else if (out_st.stop_reason == 4)
       out_st.vcu_fsm_status_mask |= VCU_ST_STOP_TIMEOUT;
 
+    /* Command-based monitoring:
+     * Integrate heading/distance from commanded left/right inputs (out_cmd),
+     * not from motor feedback RPM.
+     */
     update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, out_cmd_right.rpm_axis1);
 
     /*add to registry with cmd & status */

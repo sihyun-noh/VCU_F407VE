@@ -66,7 +66,24 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
 
   steering = clamp_f32(steering * tune->steering_gain, -cfg->max_rc_input, cfg->max_rc_input);
 
-  /* [CALC] base formula on logical track speeds */
+  /* [CALC] base formula on logical track speeds
+   *
+   * center_input:
+   *   - throttle only speed reference (straight speed)
+   *
+   * beta:
+   *   - normalized steering in [-1.0, +1.0]
+   *
+   * left/right split:
+   *   left_raw  = center_input * (1 + beta)
+   *   right_raw = center_input * (1 - beta)
+   *
+   * Therefore the left:right ratio is:
+   *   (1 + beta) : (1 - beta)
+   *   - beta = 0   -> 1:1   (straight)
+   *   - beta > 0   -> left up / right down (one turn direction)
+   *   - beta < 0   -> left down / right up (opposite turn direction)
+   */
   center_input = cfg->max_driver_input * (throttle / cfg->max_rc_input);
   beta = steering / cfg->max_rc_input;
 
@@ -89,7 +106,10 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   left_final = left_logical;
   right_final = -right_logical;
 
-  /* [OUTPUT] saturation */
+  /* [OUTPUT] saturation
+   * If either side exceeds max_driver_input, both sides are scaled
+   * by the same ratio so the left:right proportion is preserved.
+   */
   scale_to_limit(&left_final, &right_final, cfg->max_driver_input);
   left_final = clamp_f32(left_final, -cfg->max_driver_input, cfg->max_driver_input);
   right_final = clamp_f32(right_final, -cfg->max_driver_input, cfg->max_driver_input);
