@@ -267,7 +267,7 @@ void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16
 }
 
 /* ===================== RC Mixer / Monitor ===================== */
-#define PI_F (3.1415926f)
+#define PI_F                      (3.1415926f)
 #define DRIVER_INPUT_TO_RPM_SCALE (0.1f) /* driver input ~= rpm * 10 */
 
 static void update_motion_monitor(vcu_motion_monitor_t* mon, rt_tick_t now_tick_value, int16_t left_input,
@@ -645,8 +645,6 @@ static void sbus_thread_entry(void* parameter) {
     rc.right_rpm_value = rc_mix_out.right_input;
     (void)rc_mix_state; /* available for debug/logging if needed */
 
-		
-	
     // rc.axis1 = (int16_t)((int32_t)ch[1] - 992); /* CH2 */
     // rc.axis2 = (int16_t)((int32_t)ch[3] - 992); /* CH4 */
 
@@ -870,11 +868,10 @@ static void fsm_thread_entry(void* parameter) {
       out_st.vcu_fsm_status_mask |= VCU_ST_STOP_TIMEOUT;
 
     /* Command-based monitoring:
-     * Integrate heading/distance from commanded inputs (out_cmd), not feedback RPM.
-     * Right driver command uses inverted sign by installation mapping,
-     * so convert to physical right-track direction for kinematics.
+     * Integrate heading/distance from commanded left/right inputs (out_cmd),
+     * not from motor feedback RPM.
      */
-    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, (int16_t)(-out_cmd_right.rpm_axis1));
+    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, out_cmd_right.rpm_axis1);
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
