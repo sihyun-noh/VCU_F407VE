@@ -776,7 +776,10 @@ static void sbus_thread_entry(void* parameter) {
      * CH3 = throttle (forward/backward)
      * CH1 = steering (left/right)
      */
-    vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+
+//	vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+   
+	 vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
     {
       RcInput in;
       CalcState calc_state;
@@ -787,9 +790,11 @@ static void sbus_thread_entry(void* parameter) {
       out = mix_rc_to_tracks(&in, &g_rcm_vehicle, &g_rcm_tune, &calc_state);
       rc.left_rpm_value = out.left_input;
       rc.right_rpm_value = out.right_input;
-      (void)calc_state; /* available for debug/logging if needed */
+      (void)calc_state; // available for debug/logging if needed 
     }
 
+		
+	
     // rc.axis1 = (int16_t)((int32_t)ch[1] - 992); /* CH2 */
     // rc.axis2 = (int16_t)((int32_t)ch[3] - 992); /* CH4 */
 

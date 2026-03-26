@@ -57,9 +57,15 @@ int main(void) {
   rt_hw_console_output("\nAGMO\n");
 
 	vcu_gateway_init();
-	//bsp_Sbus_thread_AGMO(1);
 	
-	
+	/*
+	for(int ab = 1; ab <= 8; ab++){ 
+		OpenCloseIO_Out(1, 1);
+		Delay_Ms(100);
+		OpenCloseIO_Out(1, 0);
+		Delay_Ms(100);
+	}
+	*/
   // bsp_battery_thread();				//ad�ɼ�����
   // bsp_MPU6050_thread();				//����̬
   // bsp_TH_thread();   					//����ʪ��

@@ -85,6 +85,8 @@ void rt_hw_board_init()
 	//初始化开关量输入
 	Init_IO_IN();
 
+	Init_IO_Out();
+	
 	//初始化adc使用DMA读取电量值
 	Init_AD();
 	

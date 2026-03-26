@@ -1029,6 +1029,16 @@
               <FileType>5</FileType>
               <FilePath>.\user\vcu_gateway.h</FilePath>
             </File>
+            <File>
+              <FileName>rc_mixer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\user\rc_mixer.c</FilePath>
+            </File>
+            <File>
+              <FileName>rc_mixer.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\user\rc_mixer.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
