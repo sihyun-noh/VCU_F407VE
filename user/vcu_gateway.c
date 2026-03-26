@@ -513,6 +513,51 @@ static void pack_upper_vehicle_status(const vcu_motion_monitor_t* mon, uint8_t o
   pack_int16_hi_lo(right_spd_x100, &out[6], &out[7]);
 }
 
+/* Upper vehicle monitor TX 0x18FF0330 (test/debug payload)
+ * data[0]   : throttle_percent (s8, -100..100)
+ * data[1]   : steering_percent (s8, -100..100)
+ * data[2]   : left_cmd_percent (s8, -100..100)
+ * data[3]   : right_cmd_percent (s8, -100..100)
+ * data[4:5] : yaw_rate_deg_s * 10 (s16)
+ * data[6:7] : center_distance_m * 100 (s16, cm)
+ */
+static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t* cmd_left, const motor_cmd_t* cmd_right,
+                                       const vcu_motion_monitor_t* mon, uint8_t out[8]) {
+  int32_t max_rc, max_drv;
+  int32_t throttle, steering, left_cmd, right_cmd;
+  int8_t throttle_pct, steering_pct, left_pct, right_pct;
+  int16_t yaw_rate_x10, center_dist_cm;
+
+  memset(out, 0, 8);
+  if (!rc || !cmd_left || !cmd_right || !mon)
+    return;
+
+  max_rc = (int32_t)g_rcm_vehicle.max_rc_input;
+  max_drv = (int32_t)g_rcm_vehicle.max_driver_input;
+  if (max_rc <= 0 || max_drv <= 0)
+    return;
+
+  throttle = clamp_i32((int32_t)rc->axis3, -max_rc, max_rc);
+  steering = clamp_i32((int32_t)rc->axis1, -max_rc, max_rc);
+  left_cmd = clamp_i32((int32_t)cmd_left->rpm_axis1, -max_drv, max_drv);
+  right_cmd = clamp_i32((int32_t)cmd_right->rpm_axis1, -max_drv, max_drv);
+
+  throttle_pct = (int8_t)clamp_i32((throttle * 100) / max_rc, -100, 100);
+  steering_pct = (int8_t)clamp_i32((steering * 100) / max_rc, -100, 100);
+  left_pct = (int8_t)clamp_i32((left_cmd * 100) / max_drv, -100, 100);
+  right_pct = (int8_t)clamp_i32((right_cmd * 100) / max_drv, -100, 100);
+
+  yaw_rate_x10 = clamp_to_i16((int32_t)(mon->yaw_rate_deg_s * 10.0f));
+  center_dist_cm = clamp_to_i16((int32_t)(mon->center_distance_m * 100.0f));
+
+  out[0] = (uint8_t)throttle_pct;
+  out[1] = (uint8_t)steering_pct;
+  out[2] = (uint8_t)left_pct;
+  out[3] = (uint8_t)right_pct;
+  pack_int16_hi_lo(yaw_rate_x10, &out[4], &out[5]);
+  pack_int16_hi_lo(center_dist_cm, &out[6], &out[7]);
+}
+
 /* ===================== Threads ===================== */
 
 /* 1) SBUS thread: update rc_intent */
@@ -825,10 +870,11 @@ static void fsm_thread_entry(void* parameter) {
       out_st.vcu_fsm_status_mask |= VCU_ST_STOP_TIMEOUT;
 
     /* Command-based monitoring:
-     * Integrate heading/distance from commanded left/right inputs (out_cmd),
-     * not from motor feedback RPM.
+     * Integrate heading/distance from commanded inputs (out_cmd), not feedback RPM.
+     * Right driver command uses inverted sign by installation mapping,
+     * so convert to physical right-track direction for kinematics.
      */
-    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, out_cmd_right.rpm_axis1);
+    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, (int16_t)(-out_cmd_right.rpm_axis1));
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
@@ -896,6 +942,7 @@ static void can_tx_thread_entry(void* parameter) {
     upper_status_t st;
     upper_status_rpm_t st_rpm;
     vcu_motion_monitor_t mon;
+    rc_intent_t rc;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     cmd_left = g_latest.motor_cmd_left;
@@ -903,6 +950,7 @@ static void can_tx_thread_entry(void* parameter) {
     st = g_latest.upper_vcu_st;
     st_rpm = g_latest.upper_rpm_st;
     mon = g_latest.motion_monitor;
+    rc = g_latest.rc;
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
@@ -926,6 +974,10 @@ static void can_tx_thread_entry(void* parameter) {
     /* send vehicle motion status to upper */
     pack_upper_vehicle_status(&mon, d1);
     (void)can_hw_send_ext(CANID_UPPER_VEHICLE_STATUS_TX, d1, 8);
+
+    /* send vehicle monitor/debug status to upper */
+    pack_upper_vehicle_monitor(&rc, &cmd_left, &cmd_right, &mon, d1);
+    (void)can_hw_send_ext(CANID_UPPER_VEHICLE_MON_TX, d1, 8);
   }
 }
 

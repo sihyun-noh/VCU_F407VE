@@ -24,6 +24,7 @@ extern "C" {
 #define CANID_UPPER_STATUS_RPM_TX   0x18FF0300u /* upper feedback: motor driver status */
 #define CANID_UPPER_STATUS_TX       0x18FF0310u /* upper feedback: vcu gateway status */
 #define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF0320u /* upper feedback: vehicle motion status */
+#define CANID_UPPER_VEHICLE_MON_TX  0x18FF0330u /* upper feedback: vehicle monitor/debug status */
 #define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
 #define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0020u /* motor driver status right RX */
 
