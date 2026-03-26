@@ -62,8 +62,8 @@ extern "C" {
 #define D0_ENABLE_MASK      (0x03u)   /*bit1:0*/
 #define D0_RESET_EN         (1u << 2) /*bit2*/
 #define D0_SLIDE_EN         (1u << 3) /*bit3*/
-#define D0_AIXS2_SPEED_MODE (1u << 6) /*bit6: 1=speed, 0=torque*/
-#define D0_AIXS1_SPEED_MODE (1u << 7) /*bit7: 1=speed, 0=torque*/
+#define D0_AXIS2_SPEED_MODE (1u << 6) /*bit6: 1=speed, 0=torque*/
+#define D0_AXIS1_SPEED_MODE (1u << 7) /*bit7: 1=speed, 0=torque*/
 
 /* Enable bits value (bit0:1)*/
 #define D0_EN_BOTH_DISABLE (0x00u) /*00*/
@@ -73,7 +73,7 @@ extern "C" {
 
 /* Default motor driver command configuration */
 #define MOTOR_DRV_DEFAULT_ENABLE_BITS \
-  (D0_EN_BOTH_ENABLE | D0_AIXS1_SPEED_MODE | D0_AIXS2_SPEED_MODE)
+  (D0_EN_BOTH_ENABLE | D0_AXIS1_SPEED_MODE | D0_AXIS2_SPEED_MODE)
 #define MOTOR_DRV_DEFAULT_AXIS1_ACC (0x64u)
 #define MOTOR_DRV_DEFAULT_AXIS2_ACC (0x64u)
 
