@@ -4,12 +4,12 @@
 #include <stdint.h>
 
 /* [CONST] Vehicle geometry and input/output limits */
-#define RCM_TRACK_WIDTH_M      (1.0f)  /* +: 같은 좌우 속도차에서 yaw 감소(덜 꺾임), -: 더 민감하게 회전 */
-#define RCM_WHEELBASE_M        (1.5f)  /* 현재 믹서 계산에는 직접 미사용(향후 모델 확장용) */
-#define RCM_WHEEL_DIAMETER_M   (0.36f) /* +: 같은 rpm에서 속도/거리 추정 증가, -: 감소 */
-#define RCM_MAX_RC_INPUT       (500.0f) /* RC 입력 정규화 기준. 실제 송신기 스케일과 일치 필요 */
-#define RCM_MAX_DRIVER_INPUT   (664.0f) /* +: 최대 출력/선회 여유 증가, -: 전체 출력 제한 강화 */
-#define RCM_MAX_SPEED_KMH      (5.0f)   /* throttle=500 기준 속도 모델. +: yaw_rate 추정 증가, -: 감소 */
+#define RCM_TRACK_WIDTH_M    (1.0f)   /* +: 같은 좌우 속도차에서 yaw 감소(덜 꺾임), -: 더 민감하게 회전 */
+#define RCM_WHEELBASE_M      (1.5f)   /* 현재 믹서 계산에는 직접 미사용(향후 모델 확장용) */
+#define RCM_WHEEL_DIAMETER_M (0.36f)  /* +: 같은 rpm에서 속도/거리 추정 증가, -: 감소 바퀴지름 0.36m */
+#define RCM_MAX_RC_INPUT     (500.0f) /* RC 입력 정규화 기준. 실제 송신기 스케일과 일치 필요 */
+#define RCM_MAX_DRIVER_INPUT (664.0f) /* +: 최대 출력/선회 여유 증가, -: 전체 출력 제한 강화 */
+#define RCM_MAX_SPEED_KMH    (5.0f)   /* throttle=500 기준 속도 모델. +: yaw_rate 추정 증가, -: 감소 */
 
 /* [TUNE] Default tuning values */
 #define RCM_DEADBAND_THROTTLE             (10.0f)  /* +: 미세 스로틀 무시 증가(둔감), -: 미세 조작 민감 */
@@ -19,6 +19,7 @@
 #define RCM_RIGHT_GAIN                    (1.0f)   /* +: 우측 출력 상대 증가, -: 우측 출력 상대 감소 */
 #define RCM_HIGH_SPEED_THROTTLE_THRESHOLD (350.0f) /* +: 고속 조향제한이 늦게 시작, -: 더 빨리 시작 */
 #define RCM_MAX_STEERING_AT_HIGH_SPEED    (250.0f) /* +: 고속에서도 조향 허용 증가, -: 고속 안정성 우선 */
+#define RCM_INPLACE_TURN_SCALE_PERCENT    (50.0f)  /* throttle==0일 때 steering 비율(100/75/50/30/0) */
 
 /* [INPUT] RC command input set */
 typedef struct {

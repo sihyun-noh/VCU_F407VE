@@ -41,6 +41,7 @@ static void scale_to_limit(float* left, float* right, float limit_abs) {
 motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st) {
   float throttle, steering, throttle_abs;
+  float steering_for_mix;
   float center_input, beta;
   float left_raw, right_raw;
   float left_logical, right_logical;
@@ -65,6 +66,15 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   }
 
   steering = clamp_f32(steering * tune->steering_gain, -cfg->max_rc_input, cfg->max_rc_input);
+  steering_for_mix = steering;
+
+  if (throttle == 0.0f && steering != 0.0f) {
+    /* In-place turn scale (default 50%):
+     * e.g. 100/75/50/30/0 by changing RCM_INPLACE_TURN_SCALE_PERCENT.
+     */
+    float inplace_scale = clamp_f32(RCM_INPLACE_TURN_SCALE_PERCENT / 100.0f, 0.0f, 1.0f);
+    steering_for_mix = steering * inplace_scale;
+  }
 
   /* [CALC] base formula on logical track speeds
    *
@@ -85,11 +95,11 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
    *   - beta < 0   -> left down / right up (opposite turn direction)
    */
   center_input = cfg->max_driver_input * (throttle / cfg->max_rc_input);
-  beta = steering / cfg->max_rc_input;
+  beta = steering_for_mix / cfg->max_rc_input;
 
   if (throttle == 0.0f && steering != 0.0f) {
     /* In-place rotation: logical left/right are opposite. */
-    float spin = cfg->max_driver_input * (steering / cfg->max_rc_input);
+    float spin = cfg->max_driver_input * (steering_for_mix / cfg->max_rc_input);
     left_raw = spin;
     right_raw = -spin;
   } else {
