@@ -195,6 +195,40 @@ static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
   return value;
 }
 
+/* SBUS moving-average filter for axis smoothing */
+#define SBUS_FILTER_WINDOW 10u
+typedef struct {
+  int16_t buf[SBUS_FILTER_WINDOW];
+  int32_t sum;
+  uint8_t idx;
+  uint8_t count;
+} sbus_ma_filter_t;
+
+static void sbus_ma_reset(sbus_ma_filter_t* f) {
+  if (!f)
+    return;
+  memset(f, 0, sizeof(*f));
+}
+
+static int16_t sbus_ma_update(sbus_ma_filter_t* f, int16_t sample) {
+  if (!f)
+    return sample;
+
+  if (f->count < SBUS_FILTER_WINDOW) {
+    f->buf[f->idx] = sample;
+    f->sum += sample;
+    f->idx = (uint8_t)((f->idx + 1u) % SBUS_FILTER_WINDOW);
+    f->count++;
+    return (int16_t)(f->sum / (int32_t)f->count);
+  }
+
+  f->sum -= f->buf[f->idx];
+  f->buf[f->idx] = sample;
+  f->sum += sample;
+  f->idx = (uint8_t)((f->idx + 1u) % SBUS_FILTER_WINDOW);
+  return (int16_t)(f->sum / (int32_t)SBUS_FILTER_WINDOW);
+}
+
 /* Differential-drive mixer (current behavior)
  * 1) Base mix:
  *    left  = throttle + steering
@@ -569,10 +603,20 @@ static void sbus_thread_entry(void* parameter) {
   uint8_t rpm_v[2] = { 0 };
   uint8_t frame[25];
   SBUS_CH_DATA ch;
+  sbus_ma_filter_t axis1_ma;
+  sbus_ma_filter_t axis2_ma;
+  sbus_ma_filter_t axis3_ma;
+  sbus_ma_filter_t axis4_ma;
+
+  sbus_ma_reset(&axis1_ma);
+  sbus_ma_reset(&axis2_ma);
+  sbus_ma_reset(&axis3_ma);
+  sbus_ma_reset(&axis4_ma);
 
   for (;;) {
     bool failsafe = false, lost = false;
 
+    /* [STEP 1] Get one SBUS frame (25B) and decode channels. */
     if (!sbus_get_frame_25b(frame)) {
       rt_thread_delay(5);
       continue;
@@ -617,21 +661,38 @@ static void sbus_thread_entry(void* parameter) {
     rc.valid = (!failsafe && !lost);
     rc.failsafe = failsafe;
 
+    /* [STEP 2] On signal loss/failsafe, reset filter history to avoid stale averaging. */
+    if (failsafe || lost) {
+      sbus_ma_reset(&axis1_ma);
+      sbus_ma_reset(&axis2_ma);
+      sbus_ma_reset(&axis3_ma);
+      sbus_ma_reset(&axis4_ma);
+    }
+
     /* TODO: map channels properly */
     rc.cultivator_down = (ch.CH5 > 1000);
     rc.cultivator_on = (ch.CH6 > 1000);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
 
-    /* axis mapping example (center=992 assumption) */
-    rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 */
-    rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 */
-    rc.axis3 = sbus_convert_to_control(ch.CH3, rpm_v); /* CH3 */
-    rc.axis4 = sbus_convert_to_control(ch.CH4, rpm_v); /* CH4 */
+    /* [STEP 3] Convert SBUS raw -> control command and then smooth by MA(10). */
+    rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 raw */
+    rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 raw */
+    rc.axis3 = sbus_convert_to_control(ch.CH3, rpm_v); /* CH3 raw */
+    rc.axis4 = sbus_convert_to_control(ch.CH4, rpm_v); /* CH4 raw */
 
-    /* Differential drive:
+    rc.axis1 = sbus_ma_update(&axis1_ma, rc.axis1); /* CH1 filtered */
+    rc.axis2 = sbus_ma_update(&axis2_ma, rc.axis2); /* CH2 filtered */
+    rc.axis3 = sbus_ma_update(&axis3_ma, rc.axis3); /* CH3 filtered */
+    rc.axis4 = sbus_ma_update(&axis4_ma, rc.axis4); /* CH4 filtered */
+
+    /* [STEP 4] Differential-drive mixing (CH3 throttle, CH1 steering):
      * CH3 = throttle (forward/backward)
      * CH1 = steering (left/right)
+     *
+     * Note:
+     * - mix_rc_to_tracks() includes high-speed steering clamp and turn-shaping
+     *   (inner/outer ratio control), then outputs left/right driver commands.
      */
 
     //vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
