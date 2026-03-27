@@ -28,7 +28,7 @@ extern "C" {
 #define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
 #define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0020u /* motor driver status right RX */
 
-#define CANID_UPPER_CMD_RPM_RX     0x18FF0200u /* TODO: set to real rpm upper->gateway cmd ID */
+#define CANID_UPPER_CMD_DRIVE_RX   0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
 #define CANID_UPPER_CMD_RX         0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
 #define CANID_MOTOR_CMD_DRIVER1_TX 0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
 #define CANID_MOTOR_CMD_DRIVER2_TX 0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
@@ -38,6 +38,7 @@ extern "C" {
 
 /* Timeouts (tune if needed) */
 #define UPPER_TIMEOUT_MS 500u
+#define UPPER_DRIVE_TIMEOUT_MS 1000u
 #define MOTOR_TIMEOUT_MS 500u
 #define SBUS_TIMEOUT_MS  1000u
 

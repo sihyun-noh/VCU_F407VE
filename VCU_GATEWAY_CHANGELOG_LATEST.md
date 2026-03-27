@@ -10,6 +10,9 @@
 
 ## 2. 핵심 변경 사항
 
+주의:
+- 아래 2.6 항목(Upper drive cmd)은 현재 테스트 중인 임시 사양이며 최종 확정 전 변경될 수 있음.
+
 ### 2.1 차동 구동/믹싱 관련
 - `sbus_thread_entry()`에서
   - `CH3`(throttle), `CH1`(steering) 기반으로 차동 입력 계산.
@@ -60,6 +63,20 @@
   - 요레이트(deg/s): `rad/s * 57.2957795`
   - 거리 누적: `distance += speed * dt`
   - Yaw 누적 후 `[0, 360)` 정규화
+
+### 2.6 Upper 제어 입력 경로 변경 (테스트 중)
+- `0x18FF0200` 수신 처리 네이밍 정리:
+  - `upper_intent_rpm_t` -> `upper_intent_drive_t`
+  - `decode_upper_rpm_cmd()` -> `decode_upper_drive_cmd()`
+  - `CANID_UPPER_CMD_RPM_RX` -> `CANID_UPPER_CMD_DRIVE_RX`
+- 현재 payload 사용값:
+  - `data[0:1]`: `throttle_cmd` (`int16`)
+  - `data[2:3]`: `steering_cmd` (`int16`)
+  - `data[4:7]`: reserved
+- 상위에서 정규화 상수는 받지 않고 코드 기본값(`g_rcm_vehicle`, `g_rcm_tune`) 사용
+- Upper drive timeout 추가:
+  - `UPPER_DRIVE_TIMEOUT_MS = 1000ms`
+  - timeout 시 Upper 경로는 STOP 처리
 
 ## 3. CAN 송신 확장
 

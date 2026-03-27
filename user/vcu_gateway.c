@@ -56,11 +56,9 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  int16_t driver_left_axis1_rpm;
-  int16_t driver_left_axis2_rpm;
-  int16_t driver_right_axis1_rpm;
-  int16_t driver_right_axis2_rpm;
-} upper_intent_rpm_t;
+  int16_t throttle_cmd; /* upper command */
+  int16_t steering_cmd; /* upper command */
+} upper_intent_drive_t;
 
 typedef struct {
   rt_tick_t ts;
@@ -115,7 +113,7 @@ typedef struct {
 struct {
   rc_intent_t rc;
   upper_intent_t upper_cmd_config;
-  upper_intent_rpm_t upper_cmd_rpm;
+  upper_intent_drive_t upper_cmd_drive;
   motor_cmd_t motor_cmd_left;
   motor_cmd_t motor_cmd_right;
 
@@ -428,20 +426,26 @@ static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
 }
 
 /* Example: decode upper rpm cmd payload (adjust to your protocol) */
-static bool decode_upper_rpm_cmd(const can_frame_t* rx, upper_intent_rpm_t* out) {
-  if (rx->ext_id != CANID_UPPER_CMD_RPM_RX)
+static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* out) {
+  if (rx->ext_id != CANID_UPPER_CMD_DRIVE_RX)
+    return false;
+  if (rx->dlc < 4u)
     return false;
 
   memset(out, 0, sizeof(*out));
   out->ts = now_tick();
-  out->valid = true;
+  out->valid = false;
 
-  /* Example payload:
-     data[0..1]=axis1 LE, data[2..3]=axis2 LE, data[4]=mode, data[5] bit0=force_stop */
-  out->driver_left_axis1_rpm = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
-  out->driver_left_axis2_rpm = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
-  out->driver_right_axis1_rpm = (int16_t)((uint16_t)rx->data[4] << 8 | ((uint16_t)rx->data[5]));
-  out->driver_right_axis2_rpm = (int16_t)((uint16_t)rx->data[6] << 8 | ((uint16_t)rx->data[7]));
+  /* Upper -> gateway drive payload (0x18FF0200):
+   * data[0:1] : throttle_cmd (int16, signed)
+   * data[2:3] : steering_cmd (int16, signed)
+   * data[4:7] : reserved
+   */
+  out->throttle_cmd = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
+  out->steering_cmd = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
+  out->throttle_cmd = (int16_t)clamp_i32((int32_t)out->throttle_cmd, CMD_MIN, CMD_MAX);
+  out->steering_cmd = (int16_t)clamp_i32((int32_t)out->steering_cmd, CMD_MIN, CMD_MAX);
+  out->valid = true;
 
   return true;
 }
@@ -723,7 +727,7 @@ static void fsm_thread_entry(void* parameter) {
 
   rc_intent_t rc;
   upper_intent_t upper;
-  upper_intent_rpm_t upper_rpm;
+  upper_intent_drive_t upper_drive;
   motor_status_t motor_left_st;
   motor_status_t motor_right_st;
   vcu_motion_monitor_t motion_monitor;
@@ -735,7 +739,7 @@ static void fsm_thread_entry(void* parameter) {
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     rc = g_latest.rc;
     upper = g_latest.upper_cmd_config;
-    upper_rpm = g_latest.upper_cmd_rpm;
+    upper_drive = g_latest.upper_cmd_drive;
     /* motor driver status */
     motor_left_st = g_latest.motor_left;
     motor_right_st = g_latest.motor_right;
@@ -744,6 +748,7 @@ static void fsm_thread_entry(void* parameter) {
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
     bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
+    bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
 
     /* motor driver status check */
     bool motor_left_ok = motor_left_st.valid && is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS) &&
@@ -859,18 +864,40 @@ static void fsm_thread_entry(void* parameter) {
           out_cmd_right.rpm_axis1 = 0;
           out_cmd_right.rpm_axis2 = 0;
 
+        } else if (!upper_drive_ok) {
+          out_cmd_left.type = CMD_STOP;
+          out_cmd_left.rpm_axis1 = 0;
+          out_cmd_left.rpm_axis2 = 0;
+          out_cmd_right.type = CMD_STOP;
+          out_cmd_right.rpm_axis1 = 0;
+          out_cmd_right.rpm_axis2 = 0;
+          out_st.stop_reason = 4; /* upper cmd timeout */
         } else {
-          // out_cmd.type = CMD_SETPOINT;
-          // out_cmd.rpm_axis1 = upper.rpm_axis1; out_cmd.rpm_axis2 = upper.rpm_axis2;
+          rc_input_t upper_mix_in;
+          vehicle_config_t upper_mix_cfg;
+          tune_config_t upper_mix_tune;
+          calc_state_t upper_mix_state;
+          motor_output_t upper_mix_out;
+
+          upper_mix_in.throttle = (float)upper_drive.throttle_cmd;
+          upper_mix_in.steering = (float)upper_drive.steering_cmd;
+          upper_mix_cfg = g_rcm_vehicle;
+          upper_mix_tune = g_rcm_tune;
+
+          memset(&upper_mix_state, 0, sizeof(upper_mix_state));
+          upper_mix_out = mix_rc_to_tracks(&upper_mix_in, &upper_mix_cfg, &upper_mix_tune, &upper_mix_state);
+
           out_cmd_left.type = CMD_SETPOINT;
-          out_cmd_left.rpm_axis1 = upper_rpm.driver_left_axis1_rpm;
-          out_cmd_left.rpm_axis2 = upper_rpm.driver_left_axis2_rpm;
+          out_cmd_left.rpm_axis1 = upper_mix_out.left_input;
+          out_cmd_left.rpm_axis2 = upper_mix_out.left_input;
           out_cmd_right.type = CMD_SETPOINT;
-          out_cmd_right.rpm_axis1 = upper_rpm.driver_right_axis1_rpm;
-          out_cmd_right.rpm_axis2 = upper_rpm.driver_right_axis2_rpm;
+          out_cmd_right.rpm_axis1 = upper_mix_out.right_input;
+          out_cmd_right.rpm_axis2 = upper_mix_out.right_input;
+          (void)upper_mix_state;
         }
         out_st.control_src = 2;
-        out_st.stop_reason = 0;
+        if (out_st.stop_reason != 4)
+          out_st.stop_reason = 0;
       } else {
 
         rt_kprintf("stop_reason : none \n");
@@ -962,10 +989,10 @@ static void can_rx_thread_entry(void* parameter) {
         continue;
       }
 
-      upper_intent_rpm_t up_rpm;
-      if (decode_upper_rpm_cmd(&rx, &up_rpm)) {
+      upper_intent_drive_t up_drive;
+      if (decode_upper_drive_cmd(&rx, &up_drive)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-        g_latest.upper_cmd_rpm = up_rpm;
+        g_latest.upper_cmd_drive = up_drive;
         rt_mutex_release(g_lock);
         continue;
       }

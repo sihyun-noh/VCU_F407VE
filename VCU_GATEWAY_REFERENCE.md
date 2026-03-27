@@ -1,6 +1,7 @@
 # VCU Gateway Reference
 
 이 문서는 VCU Gateway 프로젝트의 현재 구조/인터페이스/튜닝 포인트를 빠르게 참조하기 위한 레퍼런스 문서입니다.
+주의: 아래 "Upper drive(throttle/steering)" 항목은 현재 테스트 중인 임시 사양이며, 최종 확정 전 변경될 수 있습니다.
 
 ## 1) 적용 범위
 - `user/vcu_gateway.c`
@@ -28,8 +29,10 @@
 
 ### RX
 - `0x18FF0200`:
-  - Upper -> Gateway RPM 명령
-  - `upper_intent_rpm_t`
+  - Upper -> Gateway drive 명령 (테스트 중/미확정)
+  - `upper_intent_drive_t`
+  - `throttle_cmd`, `steering_cmd` 수신
+  - `data[4:7]` reserved
 - `0x18FF0210`:
   - Upper -> Gateway 설정/제어 명령
   - `upper_intent_t`
@@ -61,6 +64,8 @@
   - `RC valid + rc_enable` 이면 RC 제어 우선
   - 아니면 `upper valid`이면 Upper 제어
   - 둘 다 아니면 STOP
+- Upper drive timeout:
+  - `UPPER_DRIVE_TIMEOUT_MS`(현재 1000ms) 내 신규 drive 명령이 없으면 Upper 제어는 STOP 처리
 
 ## 5) RC Mixer 개요
 - 입력:
@@ -99,6 +104,7 @@
 - 좌/우 드라이버 설정값은 동일 적용.
 - Upper에서 전달된 driver config는 `D0_EN_BOTH_ENABLE` 조건을 만족할 때만 반영.
 - power supply는 현재 left driver 기준을 사용.
+- Upper drive 입력은 현재 `throttle_cmd`, `steering_cmd`만 사용하고, 정규화 상수는 코드 기본값(`g_rcm_vehicle`, `g_rcm_tune`)을 사용.
 
 ## 9) 유지보수 체크포인트
 - CAN ID 변경 시 `vcu_gateway.h` 정의와 문서 동시 업데이트

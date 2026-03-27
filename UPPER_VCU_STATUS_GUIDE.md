@@ -181,3 +181,17 @@ payload:
 
 - `0x18FF0320`, `0x18FF0330`의 운동/거리 값은 현재 **모터 실측 RPM 기반이 아니라 명령값(out_cmd) 기반 적분**입니다.
 - 따라서 실제 차량 거동과 완전히 일치하지 않을 수 있으며, 튜닝/상대 비교 용도로 보는 것이 적절합니다.
+
+---
+
+## 7) 참고: Upper -> Gateway Drive CMD (`0x18FF0200`, 테스트 중/미확정)
+
+현재 테스트 중인 형식:
+- `data[0:1]` : `throttle_cmd` (`int16`, signed)
+- `data[2:3]` : `steering_cmd` (`int16`, signed)
+- `data[4:7]` : reserved
+
+동작 개요:
+- Gateway는 위 두 값을 받아 내부 `rc_mixer`를 통해 좌/우 명령으로 변환합니다.
+- 정규화 상수(`RCM_MAX_RC_INPUT`, `RCM_MAX_DRIVER_INPUT`, `RCM_MAX_SPEED_KMH`)는 현재 상위에서 받지 않고 코드 기본값을 사용합니다.
+- `UPPER_DRIVE_TIMEOUT_MS`(현재 1000ms) 동안 신규 명령이 없으면 timeout 정지 처리됩니다.
