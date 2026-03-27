@@ -761,7 +761,8 @@ static void fsm_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
-    bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
+    //bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
+		bool upper_ok = upper.automation;
     bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
 
     /* motor driver status check */
@@ -848,7 +849,7 @@ static void fsm_thread_entry(void* parameter) {
     else {
       /* Not STOP: RC enable => RC setpoint priority (Upper STOP already handled above) */
       if (rc_ok && rc.rc_enable) {
-        // rt_kprintf("stop_reason :rc_ok \n");
+         rt_kprintf("stop_reason :rc_ok \n");
         // out_cmd.src = SRC_RC; out_cmd.type = CMD_SETPOINT;
         out_cmd_left.src = SRC_RC;
         out_cmd_left.type = CMD_SETPOINT;
@@ -866,11 +867,11 @@ static void fsm_thread_entry(void* parameter) {
         out_st.control_src = FSM_CTRL_SRC_RC;
         out_st.stop_reason = FSM_STOP_NONE;
       } else if (upper_ok) {
-        // rt_kprintf("stop_reason :upper_ok \n");
+         rt_kprintf("stop_reason :upper_ok \n");
         // out_cmd.src = SRC_UPPER;
         out_cmd_left.src = SRC_UPPER;
         out_cmd_right.src = SRC_UPPER;
-        if (upper.upper_force_active == 0) {
+        if (upper.upper_force_active == 1) {
           // out_cmd.type = CMD_STOP;
           // out_cmd.rpm_axis1 = 0; out_cmd.rpm_axis2 = 0;
           out_cmd_left.type = CMD_STOP;
