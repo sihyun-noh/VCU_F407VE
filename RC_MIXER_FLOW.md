@@ -19,6 +19,7 @@
 - `track_width_m`, `wheelbase_m`, `wheel_diameter_m`
 - `max_rc_input` (기본 `500`)
 - `max_driver_input` (기본 `664`)
+- `left_dir_sign`, `right_dir_sign` (모터 설치 방향 부호, 기본 `+1`, `-1`)
 
 ### 튜닝값 (`tune_config_t`)
 - deadband (`deadband_throttle`, `deadband_steering`)
@@ -88,10 +89,17 @@ raw 계산:
 - `left_logical = left_raw * left_gain`
 - `right_logical = right_raw * right_gain`
 
-### Step I. 우측 모터 부호 매핑
-- 현재 구현은 대칭 설치 기준으로 우측 명령 부호 반전:
-  - `left_final = left_logical`
-  - `right_final = -right_logical`
+### Step I. 모터 설치 방향 매핑(Geometry sign)
+- 하드코딩 반전 대신 `vehicle_config_t`의 방향 부호 사용:
+  - `left_final = left_logical * left_dir_sign`
+  - `right_final = right_logical * right_dir_sign`
+
+기본값:
+- `left_dir_sign = +1`
+- `right_dir_sign = -1`
+
+의미:
+- 플랫폼 설치 방향이 바뀌어도 수식 변경 없이 설정값만 바꿔 대응 가능
 
 ### Step J. 출력 제한(saturation)
 - `scale_to_limit()`에서 한쪽이라도 최대치 초과 시,

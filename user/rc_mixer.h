@@ -44,6 +44,9 @@ typedef struct {
   float max_rc_input;
   /* Driver command max magnitude (e.g. 664) */
   float max_driver_input;
+  /* Drive direction sign per side (+1 or -1) */
+  int8_t left_dir_sign;
+  int8_t right_dir_sign;
 } vehicle_config_t;
 
 /* [TUNE] Runtime tuning parameters */
