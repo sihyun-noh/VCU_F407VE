@@ -20,6 +20,9 @@
 #define RCM_HIGH_SPEED_THROTTLE_THRESHOLD (350.0f) /* +: 고속 조향제한이 늦게 시작, -: 더 빨리 시작 */
 #define RCM_MAX_STEERING_AT_HIGH_SPEED    (250.0f) /* +: 고속에서도 조향 허용 증가, -: 고속 안정성 우선 */
 #define RCM_INPLACE_TURN_SCALE_PERCENT    (50.0f)  /* throttle==0일 때 steering 비율(100/75/50/30/0) */
+#define RCM_TURN_SHARPNESS                (0.25f)  /* +: 선회 시 outer 감쇠 증가, -: outer 유지 */
+#define RCM_MIN_INNER_RATIO               (0.20f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
+#define RCM_MIN_OUTER_RATIO               (0.70f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
 /* [INPUT] RC command input set */
 typedef struct {
@@ -77,6 +80,13 @@ typedef struct {
   float left_input_raw;
   /* Pre-gain/raw right command (command-side mapped) */
   float right_input_raw;
+  /* Turn shaping-applied left/right ratio vs center_input */
+  float left_ratio;
+  float right_ratio;
+  /* Turn shaping debug values */
+  float beta_abs;
+  float inner_ratio;
+  float outer_ratio;
   /* Final left command after gain/saturation */
   float left_input_final;
   /* Final right command after gain/saturation */

@@ -20,6 +20,45 @@ static float apply_deadband_f32(float v, float deadband) {
   return v;
 }
 
+/* [CALC] turn shaping for non in-place motion
+ * Goal:
+ * - prevent inner track from collapsing too early to zero
+ * - reduce outer track slightly on sharp turns
+ */
+static void apply_turn_shaping(float beta, float* left_ratio, float* right_ratio, float* inner_ratio_out,
+                               float* outer_ratio_out) {
+  float beta_abs, inner_ratio, outer_ratio;
+
+  if (!left_ratio || !right_ratio)
+    return;
+
+  beta_abs = (beta >= 0.0f) ? beta : -beta;
+  inner_ratio = 1.0f - beta_abs;
+  if (inner_ratio < RCM_MIN_INNER_RATIO)
+    inner_ratio = RCM_MIN_INNER_RATIO;
+
+  outer_ratio = 1.0f - (RCM_TURN_SHARPNESS * beta_abs);
+  outer_ratio = clamp_f32(outer_ratio, RCM_MIN_OUTER_RATIO, 1.0f);
+
+  if (beta > 0.0f) {
+    /* steering > 0: left is outer, right is inner */
+    *left_ratio = outer_ratio;
+    *right_ratio = inner_ratio;
+  } else if (beta < 0.0f) {
+    /* steering < 0: right is outer, left is inner */
+    *left_ratio = inner_ratio;
+    *right_ratio = outer_ratio;
+  } else {
+    *left_ratio = 1.0f;
+    *right_ratio = 1.0f;
+  }
+
+  if (inner_ratio_out)
+    *inner_ratio_out = inner_ratio;
+  if (outer_ratio_out)
+    *outer_ratio_out = outer_ratio;
+}
+
 /* [CALC] saturation by common ratio scaling */
 static void scale_to_limit(float* left, float* right, float limit_abs) {
   float l_abs, r_abs, max_abs, scale;
@@ -41,8 +80,8 @@ static void scale_to_limit(float* left, float* right, float limit_abs) {
 motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st) {
   float throttle, steering, throttle_abs;
-  float steering_for_mix;
-  float center_input, beta;
+  float steering_for_mix, beta_abs;
+  float center_input, beta, left_ratio, right_ratio, inner_ratio_dbg, outer_ratio_dbg;
   float left_raw, right_raw;
   float left_logical, right_logical;
   float left_final, right_final;
@@ -76,35 +115,34 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
     steering_for_mix = steering * inplace_scale;
   }
 
-  /* [CALC] base formula on logical track speeds
+  /* [CALC] base references
    *
    * center_input:
    *   - throttle only speed reference (straight speed)
    *
    * beta:
    *   - normalized steering in [-1.0, +1.0]
-   *
-   * left/right split:
-   *   left_raw  = center_input * (1 + beta)
-   *   right_raw = center_input * (1 - beta)
-   *
-   * Therefore the left:right ratio is:
-   *   (1 + beta) : (1 - beta)
-   *   - beta = 0   -> 1:1   (straight)
-   *   - beta > 0   -> left up / right down (one turn direction)
-   *   - beta < 0   -> left down / right up (opposite turn direction)
    */
   center_input = cfg->max_driver_input * (throttle / cfg->max_rc_input);
   beta = steering_for_mix / cfg->max_rc_input;
+  beta_abs = (beta >= 0.0f) ? beta : -beta;
 
   if (throttle == 0.0f && steering != 0.0f) {
     /* In-place rotation: logical left/right are opposite. */
     float spin = cfg->max_driver_input * (steering_for_mix / cfg->max_rc_input);
     left_raw = spin;
     right_raw = -spin;
+    left_ratio = 1.0f;
+    right_ratio = -1.0f;
+    inner_ratio_dbg = 1.0f;
+    outer_ratio_dbg = 1.0f;
   } else {
-    left_raw = center_input * (1.0f + beta);
-    right_raw = center_input * (1.0f - beta);
+    /* Normal steering path:
+     * shape both outer/inner ratios to avoid abrupt inner zero.
+     */
+    apply_turn_shaping(beta, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg);
+    left_raw = center_input * left_ratio;
+    right_raw = center_input * right_ratio;
   }
 
   left_logical = left_raw * tune->left_gain;
@@ -128,14 +166,17 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   out.right_input = (int16_t)right_final;
 
   if (st) {
-    float beta_abs;
     st->center_input = center_input;
     st->beta = beta;
+    st->beta_abs = beta_abs;
+    st->left_ratio = left_ratio;
+    st->right_ratio = right_ratio;
+    st->inner_ratio = inner_ratio_dbg;
+    st->outer_ratio = outer_ratio_dbg;
 
     if (beta == 0.0f) {
       st->radius_m = 0.0f; /* straight */
     } else {
-      beta_abs = (beta >= 0.0f) ? beta : -beta;
       st->radius_m = (cfg->track_width_m * 0.5f) / beta_abs;
     }
 
