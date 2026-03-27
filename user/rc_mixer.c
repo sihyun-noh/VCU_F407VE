@@ -10,8 +10,13 @@ const vehicle_config_t g_rcm_vehicle = {
   -1, /* right_dir_sign */
 };
 
-const tune_config_t g_rcm_tune = { RCM_DEADBAND_THROTTLE, RCM_DEADBAND_STEERING, RCM_STEERING_GAIN, RCM_LEFT_GAIN,
-                                   RCM_RIGHT_GAIN, RCM_HIGH_SPEED_THROTTLE_THRESHOLD, RCM_MAX_STEERING_AT_HIGH_SPEED };
+const tune_config_t g_rcm_tune = { RCM_DEADBAND_THROTTLE,
+                                   RCM_DEADBAND_STEERING,
+                                   RCM_STEERING_GAIN,
+                                   RCM_LEFT_GAIN,
+                                   RCM_RIGHT_GAIN,
+                                   RCM_HIGH_SPEED_THROTTLE_THRESHOLD,
+                                   RCM_MAX_STEERING_AT_HIGH_SPEED };
 
 static float clamp_f32(float v, float lo, float hi) {
   if (v < lo)
@@ -155,7 +160,9 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   left_logical = left_raw * tune->left_gain;
   right_logical = right_raw * tune->right_gain;
 
-  /* Installation mapping by geometry config (+1 or -1 per side). */
+  /* Installation mapping by geometry config (+1/-1 per side).
+   * Default: left normal, right inverted.
+   */
   left_final = left_logical * (float)((cfg->left_dir_sign >= 0) ? 1 : -1);
   right_final = right_logical * (float)((cfg->right_dir_sign >= 0) ? 1 : -1);
 
