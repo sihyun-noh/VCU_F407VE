@@ -139,3 +139,45 @@
 
 해석:
 - VCU가 모터 드라이버 fault를 감지해 주행 차단
+
+---
+
+## 5) 최신 추가: 차량 모니터링 CAN 프레임
+
+### 5.1 `0x18FF0320` (vehicle motion status)
+목적:
+- 차량 운동 상태를 상위에서 빠르게 모니터링
+
+payload:
+- `data[0:1]` : `yaw_deg_0_360 * 10` (`s16`)
+- `data[2:3]` : `yaw_rate_deg_s * 10` (`s16`)
+- `data[4:5]` : `left_speed_m_s * 100` (`s16`)
+- `data[6:7]` : `right_speed_m_s * 100` (`s16`)
+
+해석 예:
+- `data[0:1]=900` -> yaw 약 `90.0 deg`
+- `data[2:3]=-125` -> yaw rate 약 `-12.5 deg/s`
+
+### 5.2 `0x18FF0330` (vehicle monitor/debug status)
+목적:
+- 테스트/튜닝 시 입력과 출력의 상관관계를 직관적으로 확인
+
+payload:
+- `data[0]` : `throttle_percent` (`s8`, -100~100)
+- `data[1]` : `steering_percent` (`s8`, -100~100)
+- `data[2]` : `left_cmd_percent` (`s8`, -100~100)
+- `data[3]` : `right_cmd_percent` (`s8`, -100~100)
+- `data[4:5]` : `yaw_rate_deg_s * 10` (`s16`)
+- `data[6:7]` : `center_distance_m * 100` (`s16`, cm)
+
+해석 예:
+- `data[0]=50`, `data[1]=30` -> throttle 50%, steering 30%
+- `data[2]=80`, `data[3]=-20` -> 좌/우 명령 비율 비대칭 확인 가능
+- `data[6:7]=123` -> 중심 이동거리 약 `1.23 m`
+
+---
+
+## 6) 중요 주의사항 (현재 구현 기준)
+
+- `0x18FF0320`, `0x18FF0330`의 운동/거리 값은 현재 **모터 실측 RPM 기반이 아니라 명령값(out_cmd) 기반 적분**입니다.
+- 따라서 실제 차량 거동과 완전히 일치하지 않을 수 있으며, 튜닝/상대 비교 용도로 보는 것이 적절합니다.
