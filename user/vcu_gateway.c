@@ -561,6 +561,8 @@ static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t*
 /* ===================== Threads ===================== */
 
 /* 1) SBUS thread: update rc_intent */
+
+calc_state_t rc_mix_state;
 static void sbus_thread_entry(void* parameter) {
   (void)parameter;
   uint8_t cmd[8] = { 0 };
@@ -632,10 +634,10 @@ static void sbus_thread_entry(void* parameter) {
      * CH1 = steering (left/right)
      */
 
-    vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+    //vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
 
     rc_input_t rc_mix_in;
-    calc_state_t rc_mix_state;
+    //calc_state_t rc_mix_state;
     motor_output_t rc_mix_out;
     memset(&rc_mix_state, 0, sizeof(rc_mix_state));
     rc_mix_in.throttle = (float)rc.axis3;
@@ -871,7 +873,7 @@ static void fsm_thread_entry(void* parameter) {
      * Integrate heading/distance from commanded left/right inputs (out_cmd),
      * not from motor feedback RPM.
      */
-    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, out_cmd_right.rpm_axis1);
+    update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, (int16_t)(-out_cmd_right.rpm_axis1));
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
