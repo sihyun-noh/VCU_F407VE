@@ -28,8 +28,9 @@
 typedef struct {
   rt_tick_t ts; /* rt_tick */
   bool valid;
-  bool rc_enable;         /* CH10 enable */
-  bool rc_emergency_stop; /* emergency stop */
+  bool rc_enable;            /* CH10 enable */
+  bool rc_emergency_stop;    /* emergency stop */
+  bool rc_remote_automation; /* RC D button: remote automation flag */
   bool cultivator_down;
   bool cultivator_on;
   int16_t axis1;           /* rc Right stick up/down */
@@ -692,6 +693,7 @@ static void sbus_thread_entry(void* parameter) {
     rc.cultivator_on = (ch.CH6 > 1000);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
+    rc.rc_remote_automation = (ch.CH10 > 1000);
 
     /* [STEP 3] Convert SBUS raw -> control command and then smooth by MA(10). */
     rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 raw */
@@ -713,10 +715,10 @@ static void sbus_thread_entry(void* parameter) {
      *   (inner/outer ratio control), then outputs left/right driver commands.
      */
 
-    //vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
+    // vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
 
     rc_input_t rc_mix_in;
-    //calc_state_t rc_mix_state;
+    // calc_state_t rc_mix_state;
     motor_output_t rc_mix_out;
     memset(&rc_mix_state, 0, sizeof(rc_mix_state));
     rc_mix_in.throttle = (float)rc.axis3;
@@ -761,8 +763,8 @@ static void fsm_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
-    //bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
-		bool upper_ok = upper.automation;
+    // bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
+    bool upper_ok = upper.automation;
     bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
 
     /* motor driver status check */
@@ -802,6 +804,8 @@ static void fsm_thread_entry(void* parameter) {
       out_st.rc_status_mask |= RC_ST_CULTIVATOR_DOWN;
     if (rc.cultivator_on)
       out_st.rc_status_mask |= RC_ST_CULTIVATOR_ON;
+    if (rc.rc_remote_automation)
+      out_st.rc_status_mask |= RC_ST_REMOTE_AUTOMATION;
 
     /* motor driver status mapping */
     out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
@@ -834,7 +838,7 @@ static void fsm_thread_entry(void* parameter) {
       out_cmd_right.type = CMD_STOP;
       out_st.control_src = FSM_CTRL_SRC_STOP;
       out_st.stop_reason =
-        (motor_left_st.valid && motor_left_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
+          (motor_left_st.valid && motor_left_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
     }
     /*
     else if (!motor_right_ok)
@@ -849,7 +853,7 @@ static void fsm_thread_entry(void* parameter) {
     else {
       /* Not STOP: RC enable => RC setpoint priority (Upper STOP already handled above) */
       if (rc_ok && rc.rc_enable) {
-         rt_kprintf("stop_reason :rc_ok \n");
+        rt_kprintf("stop_reason :rc_ok \n");
         // out_cmd.src = SRC_RC; out_cmd.type = CMD_SETPOINT;
         out_cmd_left.src = SRC_RC;
         out_cmd_left.type = CMD_SETPOINT;
@@ -867,7 +871,7 @@ static void fsm_thread_entry(void* parameter) {
         out_st.control_src = FSM_CTRL_SRC_RC;
         out_st.stop_reason = FSM_STOP_NONE;
       } else if (upper_ok) {
-         rt_kprintf("stop_reason :upper_ok \n");
+        rt_kprintf("stop_reason :upper_ok \n");
         // out_cmd.src = SRC_UPPER;
         out_cmd_left.src = SRC_UPPER;
         out_cmd_right.src = SRC_UPPER;

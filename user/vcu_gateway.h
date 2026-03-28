@@ -47,9 +47,10 @@ extern "C" {
 #define RC_ST_ENABLE          (1u << 0) /* rc_enable */
 #define RC_ST_EMERGENCY_STOP  (1u << 1) /* rc_emergency_stop */
 #define RC_ST_FAILSAFE        (1u << 2) /* failsafe */
-#define RC_ST_FRESH           (1u << 3) /* SBUS freshness */
+#define RC_ST_FRESH           (1u << 3) /* real-time RC freshness (not fresh => timeout state) */
 #define RC_ST_CULTIVATOR_DOWN (1u << 4) /* cultivator_down */
 #define RC_ST_CULTIVATOR_ON   (1u << 5) /* cultivator_on */
+#define RC_ST_REMOTE_AUTOMATION (1u << 6) /* rc_remote_automation */
 
 /* VCU FSM status bit mask */
 #define VCU_ST_SRC_NONE         (1u << 0) /* control source: none */
