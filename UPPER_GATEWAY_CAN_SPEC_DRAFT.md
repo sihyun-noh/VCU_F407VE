@@ -12,6 +12,10 @@
 - FSM update period: every `10 ms` (`FSM_PERIOD_MS`)
 - RX processing: event-driven from CAN RX queue
 
+Normalization scale (unified):
+- Input scale (RC and Upper drive cmd): `RCM_MAX_RC_INPUT` (current `±500`)
+- Driver output scale: `RCM_MAX_DRIVER_INPUT` (current `±664`, `5 km/h` max model)
+
 ## 3. CAN ID Table (Upper Interface)
 
 | Direction | ExtID | Period | Purpose |
@@ -28,13 +32,22 @@
 ### 4.1 `0x18FF0200` Drive Command
 - Decoder: `decode_upper_drive_cmd()`
 - Type: signed `int16` big-endian per signal
-- Clamp range in code: `CMD_MIN..CMD_MAX` (`-670..670`)
+- Clamp range in code: `-RCM_MAX_RC_INPUT..+RCM_MAX_RC_INPUT` (current: `-500..+500`)
 
 | Byte | Signal | Type | Description |
 |---|---|---|---|
 | 0:1 | `throttle_cmd` | `int16` | Forward/backward command |
 | 2:3 | `steering_cmd` | `int16` | Left/right command |
-| 4:7 | Reserved | - | Not used |
+| 4:5 | `max_driver_input_cmd` | `uint16` | Runtime max driver input for upper mix |
+| 6:7 | `max_speed_kmh_x100` | `uint16` | Runtime max speed (km/h * 100) for upper mix/yaw model |
+
+Apply rule in current code:
+- `throttle_cmd`, `steering_cmd` are clamped to `±RCM_MAX_RC_INPUT` (current `±500`).
+- When `max_driver_input_cmd > 0`, upper mix uses that value as `vehicle_config.max_driver_input`.
+- When `max_speed_kmh_x100 > 0`, upper mix uses `max_speed_kmh_x100 / 100.0` as `vehicle_config.max_speed_kmh`.
+- If either runtime field is `0`, default compile-time config is kept (`RCM_MAX_DRIVER_INPUT`, `RCM_MAX_SPEED_KMH`).
+- Encoding note: send speed as `km/h * 100`.
+  - Example: `5 km/h` must be sent as `500`.
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
@@ -70,10 +83,10 @@ Motor driver apply rule (current code):
 
 | Byte | Signal | Type | Range/Note |
 |---|---|---|---|
-| 0:1 | `driver_left_axis1_rpm` | `int16` | Clamped to `-670..670` |
-| 2:3 | `driver_left_axis2_rpm` | `int16` | Clamped to `-670..670` |
-| 4:5 | `driver_right_axis1_rpm` | `int16` | Clamped to `-670..670` |
-| 6:7 | `driver_right_axis2_rpm` | `int16` | Clamped to `-670..670` |
+| 0:1 | `driver_left_axis1_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
+| 2:3 | `driver_left_axis2_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
+| 4:5 | `driver_right_axis1_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
+| 6:7 | `driver_right_axis2_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
 
 ### 5.2 `0x18FF0310` Gateway Status
 - Packer: `pack_upper_status()`
@@ -81,7 +94,7 @@ Motor driver apply rule (current code):
 
 | Byte | Signal | Type | Description |
 |---|---|---|---|
-| 0:1 | `power_supply_value` | `int16` | Currently from left motor `supply_volt`, clamped `-670..670` |
+| 0:1 | `power_supply_value` | `int16` | Currently from left motor `supply_volt`, clamped `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
 | 2 | `md_left_fault_msg` | `uint8` | Driver 1 fault bits |
 | 3 | `md_right_fault_msg` | `uint8` | Driver 2 fault bits |
 | 4 | `rc_status_mask` | `uint8` | RC status bit mask |

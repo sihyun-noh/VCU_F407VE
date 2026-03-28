@@ -11,7 +11,7 @@
 - `CH3`: Throttle (전/후진 속도)
 - `CH1`: Steering (좌/우 회전)
 
-현재 코드에서는 각 채널을 `sbus_to_cmd()`로 변환해 `CMD_MIN ~ CMD_MAX` 범위(기본 `-500 ~ 500`)의 정규화 명령값으로 사용한다.
+현재 코드에서는 각 채널을 `sbus_to_cmd()`로 변환해 입력 정규화 범위 `-RCM_MAX_RC_INPUT ~ +RCM_MAX_RC_INPUT` (기본 `-500 ~ +500`)을 사용한다.
 
 ## 3. 차동 믹싱 공식
 - `left = throttle + steering`
@@ -23,8 +23,7 @@
 - `throttle == 0`일 때는 제자리 회전 허용
 
 계산 후 아래 범위로 클램프한다.
-- `left  in [CMD_MIN, CMD_MAX]`
-- `right in [CMD_MIN, CMD_MAX]`
+- `left/right` 출력은 `[-RCM_MAX_DRIVER_INPUT, +RCM_MAX_DRIVER_INPUT]`로 포화 (기본 `-664 ~ +664`)
 
 ## 4. 코드 반영 위치
 - 파일: `user/vcu_gateway.c`
@@ -66,7 +65,7 @@
 - 조향 감도:
   - 필요하면 `steering`에 가중치 적용 (예: `steering * k`)
 - 최대 속도:
-  - `CMD_MIN/CMD_MAX` 조정
+  - `RCM_MAX_RC_INPUT`, `RCM_MAX_DRIVER_INPUT` 조정
 - 데드밴드:
   - `sbus_to_cmd()`의 데드밴드(`DEADBAND`) 조정
 

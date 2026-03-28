@@ -6,6 +6,7 @@ const vehicle_config_t g_rcm_vehicle = {
   RCM_WHEEL_DIAMETER_M,
   RCM_MAX_RC_INPUT,
   RCM_MAX_DRIVER_INPUT,
+  RCM_MAX_SPEED_KMH,
   1,  /* left_dir_sign */
   -1, /* right_dir_sign */
 };
@@ -192,7 +193,7 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
       st->radius_m = (cfg->track_width_m * 0.5f) / beta_abs;
     }
 
-    speed_kmh = RCM_MAX_SPEED_KMH * (throttle / cfg->max_rc_input);
+    speed_kmh = cfg->max_speed_kmh * (throttle / cfg->max_rc_input);
     vc_m_s = speed_kmh / 3.6f;
     st->yaw_rate_rad_s = (2.0f * vc_m_s * beta) / cfg->track_width_m;
     st->yaw_rate_deg_s = st->yaw_rate_rad_s * 57.2957795f;

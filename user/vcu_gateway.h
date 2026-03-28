@@ -14,10 +14,6 @@ extern "C" {
 #define SBUS_CENTER 992
 #define SBUS_MAX    1712
 
-#define CMD_MIN    (-670)
-#define CMD_CENTER (0)
-#define CMD_MAX    (670)
-
 #define DEADBAND 10
 
 /* ===================== IDs / Periods ===================== */

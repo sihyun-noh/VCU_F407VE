@@ -60,6 +60,8 @@ typedef struct {
   bool valid;
   int16_t throttle_cmd; /* upper command */
   int16_t steering_cmd; /* upper command */
+  uint16_t max_driver_input_cmd; /* data[4:5], absolute max driver input */
+  uint16_t max_speed_kmh_x100;   /* data[6:7], max speed km/h * 100 */
 } upper_intent_drive_t;
 
 typedef struct {
@@ -157,18 +159,27 @@ static inline int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi) {
   return v;
 }
 
+static inline int32_t rcm_max_rc_i32(void) {
+  return (int32_t)g_rcm_vehicle.max_rc_input; /* expected 500 */
+}
+
+static inline int32_t rcm_max_driver_i32(void) {
+  return (int32_t)g_rcm_vehicle.max_driver_input; /* expected 664 */
+}
+
 static int16_t sbus_to_cmd(int16_t sbus_data) {
+  int32_t max_rc = rcm_max_rc_i32();
   sbus_data = (int16_t)clamp_i32(sbus_data, SBUS_MIN, SBUS_MAX);
 
   if (sbus_data > (SBUS_CENTER - DEADBAND) && sbus_data < (SBUS_CENTER + DEADBAND)) {
     return 0;
   }
   if (sbus_data >= SBUS_CENTER) {
-    int32_t num = (int32_t)(sbus_data - SBUS_CENTER) * CMD_MAX;
+    int32_t num = (int32_t)(sbus_data - SBUS_CENTER) * max_rc;
     int32_t den = (SBUS_MAX - SBUS_CENTER);
     return (int16_t)((num / den));
   } else {
-    int32_t num = (int32_t)(SBUS_CENTER - sbus_data) * (-CMD_MIN);
+    int32_t num = (int32_t)(SBUS_CENTER - sbus_data) * max_rc;
     int32_t den = (SBUS_CENTER - SBUS_MIN);
     return (int16_t)(-(num / den));
   }
@@ -274,10 +285,12 @@ static int16_t sbus_ma_update(sbus_ma_filter_t* f, int16_t sample) {
  *    If throttle == 0, steering cap is not applied.
  *
  * 4) Final output clamp:
- *    left/right are clamped to [CMD_MIN, CMD_MAX].
+ *    left/right are clamped to +/- RCM_MAX_DRIVER_INPUT.
  */
 
 void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16_t* right) {
+  int32_t cmd_min = -rcm_max_driver_i32();
+  int32_t cmd_max = rcm_max_driver_i32();
   int32_t t = (int32_t)throttle;
   int32_t s = (int32_t)steering;
   // int32_t t = (int32_t)steering;
@@ -304,8 +317,8 @@ void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16
 
   if (t == 0) {
     // rt_kprintf("streeing data : %d! \n", s);
-    *left = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);
-    *right = (int16_t)clamp_i32(s, CMD_MIN, CMD_MAX);
+    *left = (int16_t)clamp_i32(s, cmd_min, cmd_max);
+    *right = (int16_t)clamp_i32(s, cmd_min, cmd_max);
     return;
   }
 
@@ -321,14 +334,14 @@ void vcu_diff_drive_mix(int16_t throttle, int16_t steering, int16_t* left, int16
   // rt_kprintf("inner data : %d! \n", inner);
 
   if (s < 0) {
-    *right = (int16_t)clamp_i32(-outer, CMD_MIN, CMD_MAX);
-    *left = (int16_t)clamp_i32(inner, CMD_MIN, CMD_MAX);
+    *right = (int16_t)clamp_i32(-outer, cmd_min, cmd_max);
+    *left = (int16_t)clamp_i32(inner, cmd_min, cmd_max);
   } else if (s > 0) {
-    *left = (int16_t)clamp_i32(outer, CMD_MIN, CMD_MAX);
-    *right = (int16_t)clamp_i32(-inner, CMD_MIN, CMD_MAX);
+    *left = (int16_t)clamp_i32(outer, cmd_min, cmd_max);
+    *right = (int16_t)clamp_i32(-inner, cmd_min, cmd_max);
   } else {
-    *left = (int16_t)clamp_i32(t, CMD_MIN, CMD_MAX);
-    *right = (int16_t)clamp_i32(-t, CMD_MIN, CMD_MAX);
+    *left = (int16_t)clamp_i32(t, cmd_min, cmd_max);
+    *right = (int16_t)clamp_i32(-t, cmd_min, cmd_max);
   }
 }
 
@@ -464,7 +477,7 @@ static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
 static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* out) {
   if (rx->ext_id != CANID_UPPER_CMD_DRIVE_RX)
     return false;
-  if (rx->dlc < 4u)
+  if (rx->dlc < 8u)
     return false;
 
   memset(out, 0, sizeof(*out));
@@ -474,12 +487,15 @@ static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* 
   /* Upper -> gateway drive payload (0x18FF0200):
    * data[0:1] : throttle_cmd (int16, signed)
    * data[2:3] : steering_cmd (int16, signed)
-   * data[4:7] : reserved
+   * data[4:5] : max_driver_input_cmd (uint16)
+   * data[6:7] : max_speed_kmh_x100 (uint16)
    */
   out->throttle_cmd = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
   out->steering_cmd = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
-  out->throttle_cmd = (int16_t)clamp_i32((int32_t)out->throttle_cmd, CMD_MIN, CMD_MAX);
-  out->steering_cmd = (int16_t)clamp_i32((int32_t)out->steering_cmd, CMD_MIN, CMD_MAX);
+  out->max_driver_input_cmd = (uint16_t)(((uint16_t)rx->data[4] << 8) | ((uint16_t)rx->data[5]));
+  out->max_speed_kmh_x100 = (uint16_t)(((uint16_t)rx->data[6] << 8) | ((uint16_t)rx->data[7]));
+  out->throttle_cmd = (int16_t)clamp_i32((int32_t)out->throttle_cmd, -rcm_max_rc_i32(), rcm_max_rc_i32());
+  out->steering_cmd = (int16_t)clamp_i32((int32_t)out->steering_cmd, -rcm_max_rc_i32(), rcm_max_rc_i32());
   out->valid = true;
 
   return true;
@@ -837,7 +853,8 @@ static void fsm_thread_entry(void* parameter) {
     out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
     out_st.md_right_fault_msg = (uint8_t)(motor_right_st.fault_bits & 0xFF);
     out_st.relay_st = upper.relay_mask;
-    out_st.power_supply_value = (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, CMD_MIN, CMD_MAX);
+    out_st.power_supply_value =
+      (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, -rcm_max_driver_i32(), rcm_max_driver_i32());
 
     /* STOP conditions (highest priority) */
     if (upper_force_stop) {
@@ -914,6 +931,16 @@ static void fsm_thread_entry(void* parameter) {
           upper_mix_cfg = g_rcm_vehicle;
           upper_mix_tune = g_rcm_tune;
 
+          /* Optional runtime limits from upper drive frame (0x18FF0200 data[4:7]). */
+          if (upper_drive.max_driver_input_cmd > 0u) {
+            upper_mix_cfg.max_driver_input =
+              (float)clamp_i32((int32_t)upper_drive.max_driver_input_cmd, 1, 32767);
+          }
+          if (upper_drive.max_speed_kmh_x100 > 0u) {
+            upper_mix_cfg.max_speed_kmh =
+              ((float)clamp_i32((int32_t)upper_drive.max_speed_kmh_x100, 1, 10000)) / 100.0f;
+          }
+
           memset(&upper_mix_state, 0, sizeof(upper_mix_state));
           upper_mix_out = mix_rc_to_tracks(&upper_mix_in, &upper_mix_cfg, &upper_mix_tune, &upper_mix_state);
 
@@ -975,10 +1002,14 @@ static void fsm_thread_entry(void* parameter) {
     upper_status_rpm_t out_rpm_st;
     memset(&out_rpm_st, 0, sizeof(out_rpm_st));
     out_rpm_st.ts = now;
-    out_rpm_st.driver_left_axis1_rpm = (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, CMD_MIN, CMD_MAX);
-    out_rpm_st.driver_left_axis2_rpm = (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, CMD_MIN, CMD_MAX);
-    out_rpm_st.driver_right_axis1_rpm = (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, CMD_MIN, CMD_MAX);
-    out_rpm_st.driver_right_axis2_rpm = (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, CMD_MIN, CMD_MAX);
+    out_rpm_st.driver_left_axis1_rpm =
+      (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, -rcm_max_driver_i32(), rcm_max_driver_i32());
+    out_rpm_st.driver_left_axis2_rpm =
+      (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
+    out_rpm_st.driver_right_axis1_rpm =
+      (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, -rcm_max_driver_i32(), rcm_max_driver_i32());
+    out_rpm_st.driver_right_axis2_rpm =
+      (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
 
     out_st.vcu_fsm_status_mask = 0;
     if (out_st.control_src == FSM_CTRL_SRC_STOP)
