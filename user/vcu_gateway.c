@@ -82,20 +82,6 @@ typedef struct {
   int16_t rpm_axis2;
 } motor_cmd_t;
 
-typedef enum {
-  FSM_CTRL_SRC_STOP = 0,
-  FSM_CTRL_SRC_RC = 1,
-  FSM_CTRL_SRC_UPPER = 2,
-} fsm_control_src_t;
-
-typedef enum {
-  FSM_STOP_NONE = 0,
-  FSM_STOP_UPPER_FORCE = 1,
-  FSM_STOP_RC_EMG = 2,
-  FSM_STOP_MOTOR_FAULT = 3,
-  FSM_STOP_TIMEOUT = 4,
-} fsm_stop_reason_t;
-
 typedef struct {
   rt_tick_t ts;
   fsm_control_src_t control_src;
@@ -106,6 +92,7 @@ typedef struct {
   uint8_t md_left_fault_msg;   /* motor driver left */
   uint8_t md_right_fault_msg;  /* motor driver right */
   uint8_t relay_st;            /* Bit mask */
+  uint8_t timeout_detail_code; /* data[7]: timeout detail code */
 
 } upper_status_t;
 
@@ -200,6 +187,37 @@ static inline int16_t clamp_to_i16(int32_t v) {
   if (v < -32768)
     return -32768;
   return (int16_t)v;
+}
+
+static uint8_t make_timeout_detail_code(bool rc_timeout, bool upper_cfg_timeout, bool upper_drive_timeout,
+                                        bool motor_left_timeout, bool motor_right_timeout) {
+  uint8_t code = TO_NONE;
+  uint8_t cnt = 0;
+
+  if (rc_timeout) {
+    code = TO_RC;
+    cnt++;
+  }
+  if (upper_cfg_timeout) {
+    code = TO_UPPER_CFG;
+    cnt++;
+  }
+  if (upper_drive_timeout) {
+    code = TO_UPPER_DRIVE;
+    cnt++;
+  }
+  if (motor_left_timeout) {
+    code = TO_MOTOR_LEFT;
+    cnt++;
+  }
+  if (motor_right_timeout) {
+    code = TO_MOTOR_RIGHT;
+    cnt++;
+  }
+
+  if (cnt > 1u)
+    return TO_MULTIPLE;
+  return code;
 }
 
 static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
@@ -511,7 +529,7 @@ static void pack_upper_status(const upper_status_t* st, uint8_t out[8]) {
   out[4] = st->rc_status_mask;
   out[5] = st->vcu_fsm_status_mask;
   out[6] = st->relay_st;
-  out[7] = 0x00;
+  out[7] = st->timeout_detail_code;
 }
 
 /* Upper status rpm TX 0x18FF0300 (motor driver feedback) */
@@ -763,8 +781,8 @@ static void fsm_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
-    // bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
-    bool upper_ok = upper.automation;
+    bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
+    // bool upper_ok = upper.automation;
     bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
 
     /* motor driver status check */
@@ -772,6 +790,12 @@ static void fsm_thread_entry(void* parameter) {
                          (motor_left_st.fault_bits == 0);
     bool motor_right_ok = motor_right_st.valid && is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS) &&
                           (motor_right_st.fault_bits == 0);
+
+    bool rc_timeout = (rc.ts != 0) && !rc_ok;
+    bool upper_cfg_timeout = (upper.ts != 0) && !upper_ok;
+    bool upper_drive_timeout = (upper_drive.ts != 0) && !upper_drive_ok;
+    bool motor_left_timeout = (motor_left_st.ts != 0) && !is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS);
+    bool motor_right_timeout = (motor_right_st.ts != 0) && !is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS);
 
     bool upper_force_stop = upper.upper_force_stop;
     bool rc_emg = rc.rc_emergency_stop;
@@ -790,6 +814,7 @@ static void fsm_thread_entry(void* parameter) {
     upper_status_t out_st;
     memset(&out_st, 0, sizeof(out_st));
     out_st.ts = now;
+    out_st.timeout_detail_code = TO_NONE;
 
     out_st.rc_status_mask = 0;
     if (rc.rc_enable)
@@ -815,77 +840,59 @@ static void fsm_thread_entry(void* parameter) {
 
     /* STOP conditions (highest priority) */
     if (upper_force_stop) {
-      // out_cmd.src = SRC_NONE; out_cmd.type = CMD_STOP;
-      out_cmd_left.src = SRC_NONE;
+      // out_cmd.src = FSM_CTRL_SRC_STOP; out_cmd.type = CMD_STOP;
+      out_cmd_left.src = FSM_CTRL_SRC_STOP;
       out_cmd_left.type = CMD_STOP;
-      out_cmd_right.src = SRC_NONE;
+      out_cmd_right.src = FSM_CTRL_SRC_STOP;
       out_cmd_right.type = CMD_STOP;
       out_st.control_src = FSM_CTRL_SRC_STOP;
       out_st.stop_reason = FSM_STOP_UPPER_FORCE;
     } else if (rc_emg) {
-      // out_cmd.src = SRC_NONE; out_cmd.type = CMD_STOP;
-      out_cmd_left.src = SRC_NONE;
+      // out_cmd.src = FSM_CTRL_SRC_STOP; out_cmd.type = CMD_STOP;
+      out_cmd_left.src = FSM_CTRL_SRC_STOP;
       out_cmd_left.type = CMD_STOP;
-      out_cmd_right.src = SRC_NONE;
+      out_cmd_right.src = FSM_CTRL_SRC_STOP;
       out_cmd_right.type = CMD_STOP;
       out_st.control_src = FSM_CTRL_SRC_STOP;
       out_st.stop_reason = FSM_STOP_RC_EMG;
     } else if (!motor_left_ok) {
-      // out_cmd.src = SRC_NONE; out_cmd.type = CMD_STOP;
-      out_cmd_left.src = SRC_NONE;
+      // out_cmd.src = FSM_CTRL_SRC_STOP; out_cmd.type = CMD_STOP;
+      out_cmd_left.src = FSM_CTRL_SRC_STOP;
       out_cmd_left.type = CMD_STOP;
-      out_cmd_right.src = SRC_NONE;
+      out_cmd_right.src = FSM_CTRL_SRC_STOP;
       out_cmd_right.type = CMD_STOP;
       out_st.control_src = FSM_CTRL_SRC_STOP;
       out_st.stop_reason =
           (motor_left_st.valid && motor_left_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
-    }
-    /*
-    else if (!motor_right_ok)
-    {
-        out_cmd_left.src = SRC_NONE; out_cmd_left.type = CMD_STOP;
-        out_cmd_right.src = SRC_NONE; out_cmd_right.type = CMD_STOP;
-        out_st.control_src = FSM_CTRL_SRC_STOP;
-        out_st.stop_reason =
-          (motor_right_st.valid && motor_right_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
-    }
-    */
+      if (out_st.stop_reason == FSM_STOP_TIMEOUT)
+        out_st.timeout_detail_code = TO_MOTOR_LEFT;
+    } /* else if (!motor_right_ok) {
+       out_cmd_left.src = FSM_CTRL_SRC_STOP;
+       out_cmd_left.type = CMD_STOP;
+       out_cmd_right.src = FSM_CTRL_SRC_STOP;
+       out_cmd_right.type = CMD_STOP;
+       out_st.control_src = FSM_CTRL_SRC_STOP;
+       out_st.stop_reason =
+           (motor_right_st.valid && motor_right_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
+       if (out_st.stop_reason == FSM_STOP_TIMEOUT)
+         out_st.timeout_detail_code = TO_MOTOR_RIGHT;
+     }*/
     else {
-      /* Not STOP: RC enable => RC setpoint priority (Upper STOP already handled above) */
-      if (rc_ok && rc.rc_enable) {
-        rt_kprintf("stop_reason :rc_ok \n");
-        // out_cmd.src = SRC_RC; out_cmd.type = CMD_SETPOINT;
-        out_cmd_left.src = SRC_RC;
-        out_cmd_left.type = CMD_SETPOINT;
-        out_cmd_right.src = SRC_RC;
-        out_cmd_right.type = CMD_SETPOINT;
-        // out_cmd.rpm_axis1 = rc.axis1; out_cmd.rpm_axis2 = rc.axis2;
-        /* Left/right value drives both wheels on each side with same command. */
+      /* Not STOP:
+       * 1) upper_force_active=1 -> force Upper path even when RC is active
+       * 2) else RC active       -> RC path
+       * 3) else upper_ok        -> Upper path
+       * 4) else                 -> timeout stop
+       */
+      bool rc_active = (rc_ok && rc.rc_enable);
+      bool force_upper = (upper.upper_force_active == 1);
 
-        out_cmd_left.rpm_axis1 = rc.left_rpm_value;
-        out_cmd_left.rpm_axis2 = rc.left_rpm_value;
-
-        out_cmd_right.rpm_axis1 = rc.right_rpm_value;
-        out_cmd_right.rpm_axis2 = rc.right_rpm_value;
-
-        out_st.control_src = FSM_CTRL_SRC_RC;
-        out_st.stop_reason = FSM_STOP_NONE;
-      } else if (upper_ok) {
+      if (force_upper || (!rc_active && upper_ok)) {
         rt_kprintf("stop_reason :upper_ok \n");
-        // out_cmd.src = SRC_UPPER;
-        out_cmd_left.src = SRC_UPPER;
-        out_cmd_right.src = SRC_UPPER;
-        if (upper.upper_force_active == 1) {
-          // out_cmd.type = CMD_STOP;
-          // out_cmd.rpm_axis1 = 0; out_cmd.rpm_axis2 = 0;
-          out_cmd_left.type = CMD_STOP;
-          out_cmd_left.rpm_axis1 = 0;
-          out_cmd_left.rpm_axis2 = 0;
-          out_cmd_right.type = CMD_STOP;
-          out_cmd_right.rpm_axis1 = 0;
-          out_cmd_right.rpm_axis2 = 0;
+        out_cmd_left.src = FSM_CTRL_SRC_UPPER;
+        out_cmd_right.src = FSM_CTRL_SRC_UPPER;
 
-        } else if (!upper_drive_ok) {
+        if (!upper_drive_ok) {
           out_cmd_left.type = CMD_STOP;
           out_cmd_left.rpm_axis1 = 0;
           out_cmd_left.rpm_axis2 = 0;
@@ -893,6 +900,7 @@ static void fsm_thread_entry(void* parameter) {
           out_cmd_right.rpm_axis1 = 0;
           out_cmd_right.rpm_axis2 = 0;
           out_st.stop_reason = FSM_STOP_TIMEOUT; /* upper cmd timeout */
+          out_st.timeout_detail_code = TO_UPPER_DRIVE;
         } else {
           rc_input_t upper_mix_in;
           vehicle_config_t upper_mix_cfg;
@@ -916,18 +924,36 @@ static void fsm_thread_entry(void* parameter) {
           out_cmd_right.rpm_axis2 = upper_mix_out.right_input;
           (void)upper_mix_state;
         }
+
         out_st.control_src = FSM_CTRL_SRC_UPPER;
         if (out_st.stop_reason != FSM_STOP_TIMEOUT)
-          out_st.stop_reason = FSM_STOP_NONE;
+          out_st.stop_reason = FSM_STOP_REASON_NONE;
+      } else if (rc_active) {
+        rt_kprintf("stop_reason :rc_ok \n");
+        out_cmd_left.src = FSM_CTRL_SRC_RC;
+        out_cmd_left.type = CMD_SETPOINT;
+        out_cmd_right.src = FSM_CTRL_SRC_RC;
+        out_cmd_right.type = CMD_SETPOINT;
+
+        /* Left/right value drives both wheels on each side with same command. */
+        out_cmd_left.rpm_axis1 = rc.left_rpm_value;
+        out_cmd_left.rpm_axis2 = rc.left_rpm_value;
+        out_cmd_right.rpm_axis1 = rc.right_rpm_value;
+        out_cmd_right.rpm_axis2 = rc.right_rpm_value;
+
+        out_st.control_src = FSM_CTRL_SRC_RC;
+        out_st.stop_reason = FSM_STOP_REASON_NONE;
       } else {
 
         rt_kprintf("stop_reason : none \n");
-        out_cmd_left.src = SRC_NONE;
+        out_cmd_left.src = FSM_CTRL_SRC_STOP;
         out_cmd_left.type = CMD_STOP;
-        out_cmd_right.src = SRC_NONE;
+        out_cmd_right.src = FSM_CTRL_SRC_STOP;
         out_cmd_right.type = CMD_STOP;
         out_st.control_src = FSM_CTRL_SRC_STOP;
         out_st.stop_reason = FSM_STOP_TIMEOUT;
+        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, upper_cfg_timeout, upper_drive_timeout,
+                                                              motor_left_timeout, motor_right_timeout);
       }
     }
 
@@ -1131,9 +1157,9 @@ int vcu_gateway_init(void) {
   rt_mutex_take(g_lock, RT_WAITING_FOREVER);
   memset(&g_latest, 0, sizeof(g_latest));
   g_latest.motor_cmd_left.type = CMD_STOP;
-  g_latest.motor_cmd_left.src = SRC_NONE;
+  g_latest.motor_cmd_left.src = FSM_CTRL_SRC_STOP;
   g_latest.motor_cmd_right.type = CMD_STOP;
-  g_latest.motor_cmd_right.src = SRC_NONE;
+  g_latest.motor_cmd_right.src = FSM_CTRL_SRC_STOP;
   rt_mutex_release(g_lock);
 
   /* threads */

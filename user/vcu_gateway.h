@@ -43,6 +43,15 @@ extern "C" {
 #define MOTOR_TIMEOUT_MS       500u
 #define SBUS_TIMEOUT_MS        1000u
 
+/* Timeout detail code for 0x18FF0310 data[7] */
+#define TO_NONE            (0u)
+#define TO_RC              (1u)
+#define TO_UPPER_CFG       (2u)
+#define TO_UPPER_DRIVE     (3u)
+#define TO_MOTOR_LEFT      (4u)
+#define TO_MOTOR_RIGHT     (5u)
+#define TO_MULTIPLE        (6u)
+
 /* RC status bit mask */
 #define RC_ST_ENABLE          (1u << 0) /* rc_enable */
 #define RC_ST_EMERGENCY_STOP  (1u << 1) /* rc_emergency_stop */
@@ -81,20 +90,49 @@ extern "C" {
 #define MOTOR_DRV_DEFAULT_AXIS2_ACC   (0x64u)
 
 /* ===================== Types ===================== */
+/* Control source selected by FSM arbitration. */
 typedef enum {
   SRC_NONE = 0,
   SRC_RC = 1,
   SRC_UPPER = 2,
-} cmd_src_t;
+} vcu_control_src_t;
+/* Upper command category (reserved for command-path typing). */
 typedef enum {
   UPPER_NONE = 0,
   UPPER_RPM = 1,
   UPPER_CONFIG = 2,
-} cmd_upper_t;
+} vcu_upper_cmd_t;
+/* Motor command output mode. */
 typedef enum {
   CMD_STOP = 0,
   CMD_SETPOINT = 1,
-} cmd_type_t;
+} vcu_cmd_type_t;
+
+typedef enum {
+  STOP_NONE = 0,
+  STOP_UPPER_FORCE = 1,
+  STOP_RC_EMG = 2,
+  STOP_MOTOR_FAULT = 3,
+  STOP_TIMEOUT = 4,
+} vcu_stop_reason_t;
+
+/* Compatibility typedefs: keep existing code style/names. */
+typedef vcu_control_src_t cmd_src_t;
+typedef vcu_upper_cmd_t cmd_upper_t;
+typedef vcu_cmd_type_t cmd_type_t;
+typedef vcu_control_src_t fsm_control_src_t;
+typedef vcu_stop_reason_t fsm_stop_reason_t;
+
+/* Compatibility macros: old FSM enum labels mapped to unified values. */
+#define FSM_CTRL_SRC_STOP  SRC_NONE
+#define FSM_CTRL_SRC_RC    SRC_RC
+#define FSM_CTRL_SRC_UPPER SRC_UPPER
+
+#define FSM_STOP_REASON_NONE STOP_NONE
+#define FSM_STOP_UPPER_FORCE STOP_UPPER_FORCE
+#define FSM_STOP_RC_EMG      STOP_RC_EMG
+#define FSM_STOP_MOTOR_FAULT STOP_MOTOR_FAULT
+#define FSM_STOP_TIMEOUT     STOP_TIMEOUT
 
 typedef struct {
   uint32_t ts_tick; /* update tick */

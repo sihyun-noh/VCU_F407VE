@@ -76,7 +76,7 @@
 | 4 | `rc_status_mask` | `uint8` | RC status bit mask |
 | 5 | `vcu_fsm_status_mask` | `uint8` | VCU FSM bit mask |
 | 6 | `relay_st` | `uint8` | Relay status mask |
-| 7 | Reserved | `uint8` | `0x00` |
+| 7 | `timeout_detail_code` | `uint8` | Timeout source detail code (`TO_*`) |
 
 RC status bit mask (`data[4]`):
 - bit0: `RC_ST_ENABLE` (RC transmitter B button)
@@ -96,6 +96,25 @@ VCU FSM status bit mask (`data[5]`):
 - bit5: `VCU_ST_STOP_MOTOR_FAULT`
 - bit6: `VCU_ST_STOP_TIMEOUT`
 - bit7: `VCU_ST_RUNNING`
+
+VCU FSM bit set conditions (why each state occurs):
+- `bit0 VCU_ST_SRC_NONE`: set when control source is STOP state (no active RC/Upper command path selected).
+- `bit1 VCU_ST_SRC_RC`: set when RC control is selected (`rc_ok && rc_enable`) and FSM is driving by RC command.
+- `bit2 VCU_ST_SRC_UPPER`: set when upper control path is selected (`upper.automation` active) and FSM is driving by upper command.
+- `bit3 VCU_ST_STOP_UPPER`: set when upper force stop is requested (`upper_force_stop = 1`).
+- `bit4 VCU_ST_STOP_RC_EMG`: set when RC emergency stop is active (`rc_emergency_stop = 1`).
+- `bit5 VCU_ST_STOP_MOTOR_FAULT`: set when motor status is valid but reports fault bits (motor fault condition).
+- `bit6 VCU_ST_STOP_TIMEOUT`: set when command/status freshness timeout occurs (for example upper drive timeout, motor timeout, or no valid active source path).
+- `bit7 VCU_ST_RUNNING`: set when output command type is `CMD_SETPOINT` (actual setpoint control mode active); cleared in STOP mode.
+
+Timeout detail code (`data[7]`) mapping:
+- `0`: `TO_NONE` (no timeout detail)
+- `1`: `TO_RC` (RC timeout)
+- `2`: `TO_UPPER_CFG` (upper config timeout)
+- `3`: `TO_UPPER_DRIVE` (upper drive timeout)
+- `4`: `TO_MOTOR_LEFT` (left motor status timeout)
+- `5`: `TO_MOTOR_RIGHT` (right motor status timeout)
+- `6`: `TO_MULTIPLE` (multiple timeout conditions at the same time)
 
 ### 5.3 `0x18FF0320` Vehicle Motion Status
 - Packer: `pack_upper_vehicle_status()`
@@ -154,3 +173,19 @@ VCU FSM status bit mask (`data[5]`):
 ## 9. Reference Files
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`
+
+## 10. Latest Update Note (Enum Integration)
+- FSM/command status enums are now unified under `user/vcu_gateway.h` for centralized management.
+- Unified base enums:
+  - `vcu_control_src_t` (`SRC_NONE`, `SRC_RC`, `SRC_UPPER`)
+  - `vcu_cmd_type_t` (`CMD_STOP`, `CMD_SETPOINT`)
+  - `vcu_stop_reason_t` (`STOP_NONE`, `STOP_UPPER_FORCE`, `STOP_RC_EMG`, `STOP_MOTOR_FAULT`, `STOP_TIMEOUT`)
+- Compatibility is preserved:
+  - Existing names `cmd_src_t`, `cmd_type_t`, `fsm_control_src_t`, `fsm_stop_reason_t` remain as typedef aliases.
+  - Existing labels `FSM_CTRL_SRC_*`, `FSM_STOP_*` remain as compatibility macros.
+- Effect: status/bitmask-related semantics are managed in one header location, reducing mismatch risk between FSM logic and status reporting.
+
+### 10.1 Unified Enum Quick Guide
+- `vcu_control_src_t`: 현재 제어 명령의 주체를 나타냄 (`SRC_NONE`, `SRC_RC`, `SRC_UPPER`).
+- `vcu_upper_cmd_t`: Upper 명령 데이터의 종류를 구분하기 위한 타입 (`UPPER_NONE`, `UPPER_RPM`, `UPPER_CONFIG`).
+- `vcu_cmd_type_t`: 실제 출력 명령 모드 구분 (`CMD_STOP` = 정지, `CMD_SETPOINT` = 목표값 구동).
