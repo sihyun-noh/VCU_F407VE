@@ -38,18 +38,29 @@
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
-- Note: `upper.automation` bit is currently used as `upper_ok` gate in FSM.
+- Note: `upper_ok` condition is `upper.valid && upper.automation && within UPPER_TIMEOUT_MS`.
 
 | Byte | Signal | Type | Description |
 |---|---|---|---|
-| 0 | `driver_config_bitmask` | `uint8` | Motor driver config bits |
+| 0 | `automation` | `bool (bit0)` | Upper mode enable gate |
 | 1 | `cultivator_down` | `bool (bit0)` | Lower implement to the ground for field operation (RC left toggle) |
 | 2 | `cultivator_on` | `bool (bit0)` | Turn weeding/cultivator motor ON (start) (RC right toggle) |
 | 3 | `upper_force_stop` | `bool (bit0)` | E-stop request |
 | 4 | `upper_force_active` | `bool (bit0)` | Force-upper mode flag |
 | 5 | `relay_mask` | `uint8` | Relay command mask |
-| 6 | `automation` | `bool (bit0)` | Upper mode enable gate |
-| 7 | Reserved | - | Not used |
+| 6 | `left_accel_cmd` | `uint8` | Left accel command (0..255) |
+| 7 | `right_accel_cmd` | `uint8` | Right accel command (0..255) |
+
+Motor driver apply rule (current code):
+- `enable_bit` is fixed to default:
+  - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
+  - (`D0_EN_BOTH_ENABLE(0x03) | D0_AXIS1_SPEED_MODE(0x80) | D0_AXIS2_SPEED_MODE(0x40)`)
+- Accel comes from `0x18FF0210` only when `upper_ok == true`:
+  - `data[6]` -> left axis1/axis2 accel
+  - `data[7]` -> right axis1/axis2 accel
+- If `upper_ok == false`, default accel is used:
+  - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
+  - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
 
 ## 5. Gateway -> Upper (STATUS TX)
 
@@ -100,7 +111,7 @@ VCU FSM status bit mask (`data[5]`):
 VCU FSM bit set conditions (why each state occurs):
 - `bit0 VCU_ST_SRC_NONE`: set when control source is STOP state (no active RC/Upper command path selected).
 - `bit1 VCU_ST_SRC_RC`: set when RC control is selected (`rc_ok && rc_enable`) and FSM is driving by RC command.
-- `bit2 VCU_ST_SRC_UPPER`: set when upper control path is selected (`upper.automation` active) and FSM is driving by upper command.
+- `bit2 VCU_ST_SRC_UPPER`: set when upper control path is selected (fresh upper command path active or force-upper active).
 - `bit3 VCU_ST_STOP_UPPER`: set when upper force stop is requested (`upper_force_stop = 1`).
 - `bit4 VCU_ST_STOP_RC_EMG`: set when RC emergency stop is active (`rc_emergency_stop = 1`).
 - `bit5 VCU_ST_STOP_MOTOR_FAULT`: set when motor status is valid but reports fault bits (motor fault condition).
@@ -146,8 +157,9 @@ Timeout detail code (`data[7]`) mapping:
   2. RC emergency stop
   3. Motor fault/timeout
 - If not STOP:
-  - RC valid + enabled -> RC command active
-  - else Upper active (`automation=true`) -> Upper command active
+  - `upper_force_active=true` -> Upper command active (force select)
+  - else RC valid + enabled -> RC command active
+  - else if upper config is fresh and automation=1 -> Upper command active
   - else -> timeout stop
 - Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
 - Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
@@ -159,10 +171,15 @@ Timeout detail code (`data[7]`) mapping:
 - In other words, periodic reception is a prerequisite; without periodic updates, system behavior may remain on stale state until timeout conditions are actually evaluated by updated timestamps/valid flags.
 
 ## 7. Motor Driver Config Rule (Current)
-- Default config: `MOTOR_DRV_DEFAULT_ENABLE_BITS`
-- Upper config override is accepted only when enable bits satisfy:
-  - `(driver_config_bitmask & D0_ENABLE_MASK) == D0_EN_BOTH_ENABLE`
-- Same config is applied to left/right driver command.
+- Driver `enable_bit` is fixed to default:
+  - `MOTOR_DRV_DEFAULT_ENABLE_BITS` (`0xC3`)
+- Upper does not override `driver_config_bitmask` anymore.
+- Accel is configurable from upper command `0x18FF0210`:
+  - `data[6]`: left accel (`0..255`) -> applied to left axis1/axis2 accel
+  - `data[7]`: right accel (`0..255`) -> applied to right axis1/axis2 accel
+- If upper command is not fresh, accel falls back to defaults:
+  - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
+  - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
 
 ## 8. Open Items / TODO
 - `CANID_UPPER_CMD_RX (0x18FF0210)` comment says TODO; verify final ID assignment with upper controller.
