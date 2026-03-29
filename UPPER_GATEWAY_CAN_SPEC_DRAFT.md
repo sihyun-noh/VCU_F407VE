@@ -8,9 +8,11 @@
 - All frames use Extended ID and DLC 8 unless noted.
 
 ## 2. Communication Summary
+- CAN bitrate: `500 kbps` (500k bps)
 - TX periodic thread: every `100 ms` (`CAN_TX_PERIOD_MS`)
 - FSM update period: every `10 ms` (`FSM_PERIOD_MS`)
 - RX processing: event-driven from CAN RX queue
+- Multi-byte integer byte order: **big-endian** (`MSB first`, `LSB second`)
 
 Normalization scale (unified):
 - Input scale (RC and Upper drive cmd): `RCM_MAX_RC_INPUT` (current `±500`)
@@ -177,6 +179,11 @@ Timeout detail code (`data[7]`) mapping:
 - Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
 - Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
 - RC freshness timeout: `SBUS_TIMEOUT_MS = 1000 ms`
+
+Driver OK condition (command execution prerequisite):
+- `motor_left_ok = motor_left.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`
+- `motor_right_ok = motor_right.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`
+- If either driver is not OK, FSM goes to STOP path (`FSM_STOP_MOTOR_FAULT` or `FSM_STOP_TIMEOUT`) and normal drive command is not maintained.
 
 ### 6.1 Timeout Detection Note (Important)
 - Timeout logic is freshness-based (`valid` + elapsed time from last received frame).
