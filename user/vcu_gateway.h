@@ -130,6 +130,7 @@ typedef vcu_stop_reason_t fsm_stop_reason_t;
 #define FSM_STOP_MOTOR_FAULT STOP_MOTOR_FAULT
 #define FSM_STOP_TIMEOUT     STOP_TIMEOUT
 
+
 typedef struct {
   uint32_t ts_tick; /* update tick */
   bool valid;

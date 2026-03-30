@@ -24,6 +24,8 @@
 #include "SBUS_AGMO.h"
 #include "CAN_AGMO.h"
 #include "rc_mixer.h"
+#include "board.h"
+#include "main.h"
 
 typedef struct {
   rt_tick_t ts; /* rt_tick */
@@ -729,7 +731,7 @@ static void sbus_thread_entry(void* parameter) {
     rc.cultivator_on = (ch.CH6 > 1000);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
-    rc.rc_remote_automation = (ch.CH10 > 1000);
+    rc.rc_remote_automation = (ch.CH11 > 1000);
 
     /* [STEP 3] Convert SBUS raw -> control command and then smooth by MA(10). */
     rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 raw */
@@ -904,6 +906,7 @@ static void fsm_thread_entry(void* parameter) {
        */
       bool rc_active = (rc_ok && rc.rc_enable);
       bool force_upper = (upper.upper_force_active == 1);
+			
 
       if (force_upper || (!rc_active && upper_ok)) {
         rt_kprintf("stop_reason :upper_ok \n");
@@ -985,6 +988,15 @@ static void fsm_thread_entry(void* parameter) {
       }
     }
 
+		/*chcek relay on/off of automation flag */
+    /*if both automation on to the automation operation*/
+		bool automation_flag = (upper.automation == 1 && rc.rc_remote_automation);
+		
+		if(automation_flag)
+			OpenCloseIO_Out(1, 1);
+		else
+			OpenCloseIO_Out(1, 0);
+		
     /* Apply same default driver configuration to left/right.
      * Accept upper-supplied config only when enable bits are BOTH_ENABLE.
      */
