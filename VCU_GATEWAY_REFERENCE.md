@@ -172,6 +172,14 @@
   - `upper_ok`일 때 `0x18FF0210 data[6:7]` 적용
   - 아니면 기본 accel `0x64`
 
+### Runtime limit 적용 정책 (`0x18FF0200 data[4:7]`)
+- `max_driver_input_cmd`, `max_speed_kmh_x100`는 **Upper 제어 경로에서만** 적용됩니다.
+- RC 제어 경로는 `g_rcm_vehicle` 기본값(`RCM_MAX_DRIVER_INPUT`, `RCM_MAX_SPEED_KMH`)을 사용합니다.
+- 의도:
+  - RC 수동 운전 체감/안전 일관성 유지
+  - Upper 자동/시험 제어에서만 런타임 튜닝 허용
+- 따라서 RC와 Upper의 런타임 제한값을 항상 동기화하지는 않습니다(정책적으로 분리).
+
 관련 define 의미 (`vcu_gateway.h`):
 - `D0_AXIS1_SPEED_MODE`, `D0_AXIS2_SPEED_MODE`
   - 각 축을 speed 모드(`1`)로 동작시키는 비트

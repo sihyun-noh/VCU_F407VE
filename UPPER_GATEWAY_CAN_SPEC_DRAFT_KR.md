@@ -49,6 +49,9 @@
 - 값이 `0`이면 기본 컴파일 상수 유지(`RCM_MAX_DRIVER_INPUT`, `RCM_MAX_SPEED_KMH`)
 - 인코딩 주의: 속도는 `km/h * 100`으로 전송
   - 예: `5 km/h`는 `500`으로 전송
+- 적용 범위 주의:
+  - 위 runtime limit(`data[4:7]`)은 **Upper 제어 경로에서만** 적용
+  - RC 제어 경로는 기본값(`g_rcm_vehicle`) 사용
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
