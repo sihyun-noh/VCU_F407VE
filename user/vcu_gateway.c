@@ -255,21 +255,21 @@ static void sbus_ma_reset(sbus_ma_filter_t* f) {
   memset(f, 0, sizeof(*f));
 }
 
-static int16_t sbus_ma_update(sbus_ma_filter_t* f, int16_t sample) {
+static int16_t sbus_ma_update(sbus_ma_filter_t* f, int16_t sbus_data) {
   if (!f)
-    return sample;
+    return sbus_data;
 
   if (f->count < SBUS_FILTER_WINDOW) {
-    f->buf[f->idx] = sample;
-    f->sum += sample;
+    f->buf[f->idx] = sbus_data;
+    f->sum += sbus_data;
     f->idx = (uint8_t)((f->idx + 1u) % SBUS_FILTER_WINDOW);
     f->count++;
     return (int16_t)(f->sum / (int32_t)f->count);
   }
 
   f->sum -= f->buf[f->idx];
-  f->buf[f->idx] = sample;
-  f->sum += sample;
+  f->buf[f->idx] = sbus_data;
+  f->sum += sbus_data;
   f->idx = (uint8_t)((f->idx + 1u) % SBUS_FILTER_WINDOW);
   return (int16_t)(f->sum / (int32_t)SBUS_FILTER_WINDOW);
 }
@@ -909,7 +909,7 @@ static void fsm_thread_entry(void* parameter) {
 			
 
       if (force_upper || (!rc_active && upper_ok)) {
-        rt_kprintf("stop_reason :upper_ok \n");
+        //rt_kprintf("stop_reason :upper_ok \n");
         out_cmd_left.src = FSM_CTRL_SRC_UPPER;
         out_cmd_right.src = FSM_CTRL_SRC_UPPER;
 
@@ -960,7 +960,7 @@ static void fsm_thread_entry(void* parameter) {
         if (out_st.stop_reason != FSM_STOP_TIMEOUT)
           out_st.stop_reason = FSM_STOP_REASON_NONE;
       } else if (rc_active) {
-        rt_kprintf("stop_reason :rc_ok \n");
+        //rt_kprintf("stop_reason :rc_ok \n");
         out_cmd_left.src = FSM_CTRL_SRC_RC;
         out_cmd_left.type = CMD_SETPOINT;
         out_cmd_right.src = FSM_CTRL_SRC_RC;
@@ -976,7 +976,7 @@ static void fsm_thread_entry(void* parameter) {
         out_st.stop_reason = FSM_STOP_REASON_NONE;
       } else {
 
-        rt_kprintf("stop_reason : none \n");
+        //rt_kprintf("stop_reason : none \n");
         out_cmd_left.src = FSM_CTRL_SRC_STOP;
         out_cmd_left.type = CMD_STOP;
         out_cmd_right.src = FSM_CTRL_SRC_STOP;
@@ -991,11 +991,19 @@ static void fsm_thread_entry(void* parameter) {
 		/*chcek relay on/off of automation flag */
     /*if both automation on to the automation operation*/
 		bool automation_flag = (upper.automation == 1 && rc.rc_remote_automation);
+		uint8_t bit_mask = 0;
 		
-		if(automation_flag)
+		if(automation_flag){
 			OpenCloseIO_Out(1, 1);
-		else
+			bit_mask = 1 << 1;
+			out_st.relay_st |= bit_mask;
+		}
+		else{
 			OpenCloseIO_Out(1, 0);
+			bit_mask = 1 << 0;
+			out_st.relay_st |= bit_mask;
+			}
+		
 		
     /* Apply same default driver configuration to left/right.
      * Accept upper-supplied config only when enable bits are BOTH_ENABLE.
