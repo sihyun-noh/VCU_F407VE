@@ -52,11 +52,11 @@
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
-- `upper_ok` 조건: `upper.valid && upper.automation && within UPPER_TIMEOUT_MS`
+- `upper_ok` 조건: `upper.valid && within UPPER_TIMEOUT_MS`
 
 | Byte | 신호 | 타입 | 설명 |
 |---|---|---|---|
-| 0 | `automation` | `bool (bit0)` | Upper 모드 활성 게이트 |
+| 0 | `automation` | `bool (bit0)` | automation 신호 (RC remote automation과 함께 릴레이 동작에 사용) |
 | 1 | `cultivator_down` | `bool (bit0)` | 작업기 하강 (좌 토글) |
 | 2 | `cultivator_on` | `bool (bit0)` | 제초기/작업기 ON (우 토글) |
 | 3 | `upper_force_stop` | `bool (bit0)` | E-stop 요청 |
@@ -109,6 +109,11 @@ RC status bitmask (`data[4]`):
 - bit4: `RC_ST_CULTIVATOR_DOWN` (좌 토글, 작업기 하강)
 - bit5: `RC_ST_CULTIVATOR_ON` (우 토글, 제초기 ON)
 - bit6: `RC_ST_REMOTE_AUTOMATION` (조종기 D 버튼, remote automation)
+
+주의 (`rc.valid` vs `rc.failsafe`):
+- `rc.valid`와 `rc.failsafe`는 서로 다른 의미입니다.
+- `rc.failsafe`는 SBUS 수신 데이터가 전달하는 RC 연결 상태(disconnect/connect) 신호입니다.
+- 따라서 `rc.valid`만으로 failsafe를 판단하면 안 됩니다.
 
 VCU FSM status bitmask (`data[5]`):
 - bit0: `VCU_ST_SRC_NONE`
@@ -169,12 +174,23 @@ timeout detail code (`data[7]`):
 - STOP이 아니면:
   - `upper_force_active=true`면 Upper 강제 선택
   - 아니면 RC 유효+enable이면 RC 선택
-  - 아니면 upper config 신선도+automation=1이면 Upper 선택
+- 아니면 upper config 신선도 만족이면 Upper 선택
   - 아니면 timeout stop
 - 타임아웃 상수:
   - `UPPER_DRIVE_TIMEOUT_MS = 1000`
   - `MOTOR_TIMEOUT_MS = 500`
   - `SBUS_TIMEOUT_MS = 1000`
+
+FSM 동작 전 신뢰성 확인(핵심):
+- FSM은 수신 데이터의 `valid + freshness`를 먼저 확인한 뒤 제어 로직을 수행합니다.
+- RC(SBUS), Upper(CAN), Motor status(CAN) 중 필요한 신뢰성 조건이 깨지면 제어를 유지하지 않고 STOP 경로로 전환합니다.
+- 즉, 이 모듈은 \"값이 들어왔다\"만으로 동작하지 않고, \"최신/유효한 값\"인지 확인한 뒤 동작합니다.
+
+체크 기준 요약:
+- RC: `rc.valid && fresh(SBUS_TIMEOUT_MS)`
+- Upper config: `upper.valid && fresh(UPPER_TIMEOUT_MS)`
+- Upper drive: `upper_drive.valid && fresh(UPPER_DRIVE_TIMEOUT_MS)`
+- Motor left/right: `valid && fresh(MOTOR_TIMEOUT_MS) && fault_bits==0`
 
 Driver OK 조건(명령 유지 전제):
 - `motor_left_ok = motor_left.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`

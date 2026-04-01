@@ -53,11 +53,11 @@ Apply rule in current code:
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
-- Note: `upper_ok` condition is `upper.valid && upper.automation && within UPPER_TIMEOUT_MS`.
+- Note: `upper_ok` condition is `upper.valid && within UPPER_TIMEOUT_MS`.
 
 | Byte | Signal | Type | Description |
 |---|---|---|---|
-| 0 | `automation` | `bool (bit0)` | Upper mode enable gate |
+| 0 | `automation` | `bool (bit0)` | Automation signal (used with RC remote automation for relay behavior) |
 | 1 | `cultivator_down` | `bool (bit0)` | Lower implement to the ground for field operation (RC left toggle) |
 | 2 | `cultivator_on` | `bool (bit0)` | Turn weeding/cultivator motor ON (start) (RC right toggle) |
 | 3 | `upper_force_stop` | `bool (bit0)` | E-stop request |
@@ -174,7 +174,7 @@ Timeout detail code (`data[7]`) mapping:
 - If not STOP:
   - `upper_force_active=true` -> Upper command active (force select)
   - else RC valid + enabled -> RC command active
-  - else if upper config is fresh and automation=1 -> Upper command active
+  - else if upper config is fresh -> Upper command active
   - else -> timeout stop
 - Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
 - Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
