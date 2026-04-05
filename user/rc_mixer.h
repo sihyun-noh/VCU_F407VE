@@ -25,13 +25,25 @@
 #define RCM_MIN_OUTER_RATIO               (0.90f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
 /* [FEATURE] Mixer optional features */
-#define RCM_MIXER_FEAT_GAMMA  (1u << 0)
-#define RCM_MIXER_FEATURE_FLAGS (0u) /* default: all optional features OFF */
+#define RCM_MIXER_FEAT_GAMMA  (1u << 0) /* bit0: steering gamma shaping ON/OFF */
+#define RCM_MIXER_FEATURE_FLAGS (0u) /* 기능 비트마스크:
+                                      * 0u = 모든 옵션 OFF(기본, 기존 동작)
+                                      * RCM_MIXER_FEAT_GAMMA = steering gamma ON
+                                      * (가정) throttle gamma 기능 추가 시:
+                                      *   #define RCM_MIXER_FEAT_THROTTLE_GAMMA (1u << 1)
+                                      *   #define RCM_MIXER_FEATURE_FLAGS (RCM_MIXER_FEAT_GAMMA | RCM_MIXER_FEAT_THROTTLE_GAMMA)
+                                      */
 
 /* [TUNE-GAMMA] Steering gamma shaping */
-#define RCM_GAMMA_MIN     (0.5f)
-#define RCM_GAMMA_MAX     (3.0f)
-#define RCM_GAMMA_DEFAULT (1.0f)
+#define RCM_GAMMA_MIN     (0.5f) /* 최소값: 작을수록(1.0 미만) 센터 구간 조향이 더 민감 */
+#define RCM_GAMMA_MAX     (3.0f) /* 최대값: 클수록(1.0 초과) 센터 구간 조향이 더 둔감 */
+#define RCM_GAMMA_DEFAULT (1.0f) /* 적용 범위 0.5~3.0, 1.0=선형(기존 동일), <1 민감, >1 둔감 */
+/* 현재 gamma는 steering(beta) 경로에만 적용됨.
+ * (참고) throttle에도 동일 개념 적용 시 예:
+ *  - throttle_gamma < 1.0f : 저속 구간 응답 민감(초반 가속 빠름)
+ *  - throttle_gamma = 1.0f : 선형(기존 동일)
+ *  - throttle_gamma > 1.0f : 저속 구간 둔감(초반 가속 완만)
+ */
 
 /* [TUNE-DEX] Agile mixer extension (optional) */
 #define RCM_DEX_ENABLE        (0u)    /* 0: base only, 1: base + dex shaping */
