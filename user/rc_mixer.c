@@ -1,4 +1,5 @@
 #include "rc_mixer.h"
+#include <math.h>
 
 const vehicle_config_t g_rcm_vehicle = {
   RCM_TRACK_WIDTH_M,
@@ -17,7 +18,8 @@ const tune_config_t g_rcm_tune = { RCM_DEADBAND_THROTTLE,
                                    RCM_LEFT_GAIN,
                                    RCM_RIGHT_GAIN,
                                    RCM_HIGH_SPEED_THROTTLE_THRESHOLD,
-                                   RCM_MAX_STEERING_AT_HIGH_SPEED };
+                                   RCM_MAX_STEERING_AT_HIGH_SPEED,
+                                   RCM_GAMMA_DEFAULT };
 
 static float clamp_f32(float v, float lo, float hi) {
   if (v < lo)
@@ -33,24 +35,47 @@ static float apply_deadband_f32(float v, float deadband) {
   return v;
 }
 
+/* Gamma shaping helper:
+ * - Linear beta_abs directly maps steering input to ratio change.
+ * - This can feel too sensitive around center.
+ * - gamma>1.0 softens center response, gamma<1.0 sharpens it.
+ * - gamma==1.0 must remain equivalent to existing linear behavior.
+ */
+static float rcm_apply_gamma(float beta_abs, float gamma) {
+  float g;
+  if ((RCM_MIXER_FEATURE_FLAGS & RCM_MIXER_FEAT_GAMMA) == 0u)
+    return beta_abs;
+
+  g = clamp_f32(gamma, RCM_GAMMA_MIN, RCM_GAMMA_MAX);
+  if (g == 1.0f)
+    return beta_abs;
+
+  return powf(beta_abs, g);
+}
+
 /* [CALC] turn shaping for non in-place motion
  * Goal:
  * - prevent inner track from collapsing too early to zero
  * - reduce outer track slightly on sharp turns
  */
-static void apply_turn_shaping(float beta, float* left_ratio, float* right_ratio, float* inner_ratio_out,
-                               float* outer_ratio_out) {
-  float beta_abs, inner_ratio, outer_ratio;
+static void apply_turn_shaping(float beta, float gamma, float* left_ratio, float* right_ratio, float* inner_ratio_out,
+                               float* outer_ratio_out, float* beta_abs_out, float* beta_shaped_out,
+                               float* gamma_out, uint8_t* gamma_enabled_out) {
+  float beta_abs, beta_shaped, inner_ratio, outer_ratio;
+  float gamma_clamped;
 
   if (!left_ratio || !right_ratio)
     return;
 
   beta_abs = (beta >= 0.0f) ? beta : -beta;
-  inner_ratio = 1.0f - beta_abs;
+  gamma_clamped = clamp_f32(gamma, RCM_GAMMA_MIN, RCM_GAMMA_MAX);
+  beta_shaped = rcm_apply_gamma(beta_abs, gamma_clamped);
+
+  inner_ratio = 1.0f - beta_shaped;
   if (inner_ratio < RCM_MIN_INNER_RATIO)
     inner_ratio = RCM_MIN_INNER_RATIO;
 
-  outer_ratio = 1.0f - (RCM_TURN_SHARPNESS * beta_abs);
+  outer_ratio = 1.0f - (RCM_TURN_SHARPNESS * beta_shaped);
   outer_ratio = clamp_f32(outer_ratio, RCM_MIN_OUTER_RATIO, 1.0f);
 
   if (beta > 0.0f) {
@@ -70,6 +95,14 @@ static void apply_turn_shaping(float beta, float* left_ratio, float* right_ratio
     *inner_ratio_out = inner_ratio;
   if (outer_ratio_out)
     *outer_ratio_out = outer_ratio;
+  if (beta_abs_out)
+    *beta_abs_out = beta_abs;
+  if (beta_shaped_out)
+    *beta_shaped_out = beta_shaped;
+  if (gamma_out)
+    *gamma_out = gamma_clamped;
+  if (gamma_enabled_out)
+    *gamma_enabled_out = (uint8_t)(((RCM_MIXER_FEATURE_FLAGS & RCM_MIXER_FEAT_GAMMA) != 0u) ? 1u : 0u);
 }
 
 /* [CALC-DEX] agile extension:
@@ -153,8 +186,10 @@ static void scale_to_limit(float* left, float* right, float limit_abs) {
 motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st) {
   float throttle, steering, throttle_abs;
-  float steering_for_mix, beta_abs;
+  float steering_for_mix;
   float center_input, beta, left_ratio, right_ratio, inner_ratio_dbg, outer_ratio_dbg;
+  float beta_abs_dbg, beta_shaped_dbg, gamma_dbg;
+  uint8_t gamma_enabled_dbg;
   float dex_over_dbg, dex_applied_dbg;
   float left_raw, right_raw;
   float left_logical, right_logical;
@@ -199,7 +234,6 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
    */
   center_input = cfg->max_driver_input * (throttle / cfg->max_rc_input);
   beta = steering_for_mix / cfg->max_rc_input;
-  beta_abs = (beta >= 0.0f) ? beta : -beta;
 
   if (throttle == 0.0f && steering != 0.0f) {
     /* In-place rotation: logical left/right are opposite. */
@@ -210,13 +244,18 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
     right_ratio = -1.0f;
     inner_ratio_dbg = 1.0f;
     outer_ratio_dbg = 1.0f;
+    beta_abs_dbg = (beta >= 0.0f) ? beta : -beta;
+    beta_shaped_dbg = beta_abs_dbg;
+    gamma_dbg = clamp_f32(tune->steering_gamma, RCM_GAMMA_MIN, RCM_GAMMA_MAX);
+    gamma_enabled_dbg = (uint8_t)(((RCM_MIXER_FEATURE_FLAGS & RCM_MIXER_FEAT_GAMMA) != 0u) ? 1u : 0u);
     dex_over_dbg = 0.0f;
     dex_applied_dbg = 0.0f;
   } else {
     /* Normal steering path:
      * shape both outer/inner ratios to avoid abrupt inner zero.
      */
-    apply_turn_shaping(beta, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg);
+    apply_turn_shaping(beta, tune->steering_gamma, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg,
+                       &beta_abs_dbg, &beta_shaped_dbg, &gamma_dbg, &gamma_enabled_dbg);
     apply_turn_shaping_dex(throttle, steering_for_mix, beta, &left_ratio, &right_ratio, &dex_over_dbg, &dex_applied_dbg);
     left_raw = center_input * left_ratio;
     right_raw = center_input * right_ratio;
@@ -245,7 +284,11 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   if (st) {
     st->center_input = center_input;
     st->beta = beta;
-    st->beta_abs = beta_abs;
+    st->beta_raw = beta;
+    st->beta_abs = beta_abs_dbg;
+    st->beta_shaped = beta_shaped_dbg;
+    st->gamma = gamma_dbg;
+    st->gamma_enabled = gamma_enabled_dbg;
     st->left_ratio = left_ratio;
     st->right_ratio = right_ratio;
     st->inner_ratio = inner_ratio_dbg;
@@ -256,7 +299,7 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
     if (beta == 0.0f) {
       st->radius_m = 0.0f; /* straight */
     } else {
-      st->radius_m = (cfg->track_width_m * 0.5f) / beta_abs;
+      st->radius_m = (cfg->track_width_m * 0.5f) / beta_abs_dbg;
     }
 
     speed_kmh = cfg->max_speed_kmh * (throttle / cfg->max_rc_input);

@@ -33,6 +33,29 @@
 - `RCM_DEX_ENABLE=0` 기본값이므로 현재 운영 기본 동작은 기존 base mixer와 동일 유지
 - Dex는 필요 시에만 활성화하여 테스트 가능
 
+### 0.5 RC Mixer Gamma Shaping 추가 (옵션)
+- 대상 파일:
+  - `user/rc_mixer.c`
+  - `user/rc_mixer.h`
+- 변경 내용:
+  - 선형 조향 응답 보정을 위한 gamma shaping 경로 추가
+  - 계산식:
+    - `beta_shaped = pow(beta_abs, gamma)` (옵션 ON일 때)
+    - `inner = 1 - beta_shaped`
+    - `outer = 1 - k * beta_shaped`
+  - 기존 turn direction(좌/우 할당) 로직은 변경 없음
+- 설정/제약:
+  - feature flag: `RCM_MIXER_FEAT_GAMMA`
+  - 기본 플래그: `RCM_MIXER_FEATURE_FLAGS = 0` (OFF)
+  - gamma 범위: `0.5 ~ 3.0`
+  - 기본값: `1.0`
+- 호환성 보장:
+  - gamma OFF: 기존 base 결과와 동일
+  - gamma ON + `gamma=1.0`: 기존 선형 결과와 동일
+- 디버깅 확장:
+  - `calc_state_t`에 `beta_raw`, `beta_shaped`, `gamma`, `gamma_enabled` 추가
+  - `rcm_mixer_debug_t` 구조체 추가
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`

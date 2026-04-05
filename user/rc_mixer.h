@@ -24,6 +24,15 @@
 #define RCM_MIN_INNER_RATIO               (0.0f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
 #define RCM_MIN_OUTER_RATIO               (0.90f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
+/* [FEATURE] Mixer optional features */
+#define RCM_MIXER_FEAT_GAMMA  (1u << 0)
+#define RCM_MIXER_FEATURE_FLAGS (0u) /* default: all optional features OFF */
+
+/* [TUNE-GAMMA] Steering gamma shaping */
+#define RCM_GAMMA_MIN     (0.5f)
+#define RCM_GAMMA_MAX     (3.0f)
+#define RCM_GAMMA_DEFAULT (1.0f)
+
 /* [TUNE-DEX] Agile mixer extension (optional) */
 #define RCM_DEX_ENABLE        (0u)    /* 0: base only, 1: base + dex shaping */
 #define RCM_DEX_INNER_MIN     (-0.4f) /* when |steering|>|throttle|, inner can go down to this value */
@@ -73,7 +82,19 @@ typedef struct {
   float high_speed_throttle_threshold;
   /* Max steering magnitude at high speed */
   float max_steering_at_high_speed;
+  /* Steering gamma for optional nonlinear shaping (0.5~3.0) */
+  float steering_gamma;
 } tune_config_t;
+
+typedef struct {
+  float beta_raw;
+  float beta_abs;
+  float beta_shaped;
+  float gamma;
+  float inner_ratio;
+  float outer_ratio;
+  uint8_t gamma_enabled;
+} rcm_mixer_debug_t;
 
 /* [CALC] Optional debug/monitor output of intermediate values */
 typedef struct {
@@ -81,6 +102,8 @@ typedef struct {
   float center_input;
   /* Normalized steering ratio */
   float beta;
+  /* Raw beta before shaping */
+  float beta_raw;
   /* Estimated turn radius from beta */
   float radius_m;
   /* Estimated yaw rate [rad/s] */
@@ -96,6 +119,9 @@ typedef struct {
   float right_ratio;
   /* Turn shaping debug values */
   float beta_abs;
+  float beta_shaped;
+  float gamma;
+  uint8_t gamma_enabled;
   float inner_ratio;
   float outer_ratio;
   /* Dex shaping debug values */
