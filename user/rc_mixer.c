@@ -38,7 +38,7 @@ static float apply_deadband_f32(float v, float deadband) {
  * - prevent inner track from collapsing too early to zero
  * - reduce outer track slightly on sharp turns
  */
-static void apply_turn_shaping(float beta, float* left_ratio, float* right_ratio, float* inner_ratio_out,
+static void apply_turn_shaping(float steering_raw, float throttle_raw,float beta, float* left_ratio, float* right_ratio, float* inner_ratio_out,
                                float* outer_ratio_out) {
   float beta_abs, inner_ratio, outer_ratio;
 
@@ -49,6 +49,9 @@ static void apply_turn_shaping(float beta, float* left_ratio, float* right_ratio
   inner_ratio = 1.0f - beta_abs;
   if (inner_ratio < RCM_MIN_INNER_RATIO)
     inner_ratio = RCM_MIN_INNER_RATIO;
+	if(-steering_raw > throttle_raw)
+		inner_ratio = -0.40;
+	
 
   outer_ratio = 1.0f - (RCM_TURN_SHARPNESS * beta_abs);
   outer_ratio = clamp_f32(outer_ratio, RCM_MIN_OUTER_RATIO, 1.0f);
@@ -153,7 +156,7 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
     /* Normal steering path:
      * shape both outer/inner ratios to avoid abrupt inner zero.
      */
-    apply_turn_shaping(beta, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg);
+    apply_turn_shaping(steering_for_mix, throttle_abs, beta, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg);
     left_raw = center_input * left_ratio;
     right_raw = center_input * right_ratio;
   }

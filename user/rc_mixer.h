@@ -21,8 +21,8 @@
 #define RCM_MAX_STEERING_AT_HIGH_SPEED    (250.0f) /* +: 고속에서도 조향 허용 증가, -: 고속 안정성 우선 */
 #define RCM_INPLACE_TURN_SCALE_PERCENT    (50.0f)  /* throttle==0일 때 steering 비율(100/75/50/30/0) */
 #define RCM_TURN_SHARPNESS                (0.25f)  /* +: 선회 시 outer 감쇠 증가, -: outer 유지 */
-#define RCM_MIN_INNER_RATIO               (0.20f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
-#define RCM_MIN_OUTER_RATIO               (0.70f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
+#define RCM_MIN_INNER_RATIO               (0.0f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
+#define RCM_MIN_OUTER_RATIO               (0.90f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
 /* [INPUT] RC command input set */
 typedef struct {
