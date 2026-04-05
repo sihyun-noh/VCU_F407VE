@@ -2,6 +2,7 @@
 #define _RC_MIXER_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /* [CONST] Vehicle geometry and input/output limits */
 #define RCM_TRACK_WIDTH_M    (1.0f)   /* +: 같은 좌우 속도차에서 yaw 감소(덜 꺾임), -: 더 민감하게 회전 */
@@ -21,12 +22,12 @@
 #define RCM_MAX_STEERING_AT_HIGH_SPEED    (250.0f) /* +: 고속에서도 조향 허용 증가, -: 고속 안정성 우선 */
 #define RCM_INPLACE_TURN_SCALE_PERCENT    (50.0f)  /* throttle==0일 때 steering 비율(100/75/50/30/0) */
 #define RCM_TURN_SHARPNESS                (0.25f)  /* +: 선회 시 outer 감쇠 증가, -: outer 유지 */
-#define RCM_MIN_INNER_RATIO               (0.0f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
-#define RCM_MIN_OUTER_RATIO               (0.90f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
+#define RCM_MIN_INNER_RATIO               (0.4f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
+#define RCM_MIN_OUTER_RATIO               (0.6f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
 /* [FEATURE] Mixer optional features */
 #define RCM_MIXER_FEAT_GAMMA  (1u << 0) /* bit0: steering gamma shaping ON/OFF */
-#define RCM_MIXER_FEATURE_FLAGS (0u) /* 기능 비트마스크:
+#define RCM_MIXER_FEATURE_FLAGS (1u) /* 기능 비트마스크:
                                       * 0u = 모든 옵션 OFF(기본, 기존 동작)
                                       * RCM_MIXER_FEAT_GAMMA = steering gamma ON
                                       * (가정) throttle gamma 기능 추가 시:
@@ -45,8 +46,9 @@
  *  - throttle_gamma > 1.0f : 저속 구간 둔감(초반 가속 완만)
  */
 
+
 /* [TUNE-DEX] Agile mixer extension (optional) */
-#define RCM_DEX_ENABLE        (0u)    /* 0: base only, 1: base + dex shaping */
+#define RCM_DEX_ENABLE        (1u)    /* 0: base only, 1: base + dex shaping */
 #define RCM_DEX_INNER_MIN     (-0.4f) /* when |steering|>|throttle|, inner can go down to this value */
 #define RCM_DEX_OUTER_MAX     (1.3f)  /* when |steering|>|throttle|, outer can rise up to this value */
 #define RCM_DEX_BLEND_GAIN    (1.0f)  /* dex blend sensitivity */
@@ -160,12 +162,13 @@ extern const tune_config_t g_rcm_tune;
 /**
  * @brief Mix RC throttle/steering to left/right track commands.
  * @param in    RC input (throttle, steering)
+ * @param drive_mode   
  * @param cfg   Vehicle constants/limits
  * @param tune  Tuning parameters
  * @param st    Optional calculation state output (NULL allowed)
  * @return Final left/right driver command pair
  */
-motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cfg, const tune_config_t* tune,
+motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st);
 
 #endif /* _RC_MIXER_H_ */

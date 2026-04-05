@@ -30,9 +30,10 @@
 typedef struct {
   rt_tick_t ts; /* rt_tick */
   bool valid;
-  bool rc_enable;            /* CH10 enable */
-  bool rc_emergency_stop;    /* emergency stop */
+	bool rc_emergency_stop;    /* RC A button: emergency stop */
+  bool rc_enable;            /* RC B button: rc enable flag */
   bool rc_remote_automation; /* RC D button: remote automation flag */
+	bool rc_drive_mode;				 /* RC C button: drive flag */
   bool cultivator_down;
   bool cultivator_on;
   int16_t axis1;           /* rc Right stick up/down */
@@ -731,7 +732,9 @@ static void sbus_thread_entry(void* parameter) {
     rc.cultivator_on = (ch.CH6 > 1000);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
+		rc.rc_drive_mode = (ch.CH10 > 1000);
     rc.rc_remote_automation = (ch.CH11 > 1000);
+
 
     /* [STEP 3] Convert SBUS raw -> control command and then smooth by MA(10). */
     rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 raw */
@@ -761,7 +764,7 @@ static void sbus_thread_entry(void* parameter) {
     memset(&rc_mix_state, 0, sizeof(rc_mix_state));
     rc_mix_in.throttle = (float)rc.axis3;
     rc_mix_in.steering = (float)rc.axis1;
-    rc_mix_out = mix_rc_to_tracks(&rc_mix_in, &g_rcm_vehicle, &g_rcm_tune, &rc_mix_state);
+    rc_mix_out = mix_rc_to_tracks(&rc_mix_in, rc.rc_drive_mode, &g_rcm_vehicle, &g_rcm_tune, &rc_mix_state);
     rc.left_rpm_value = rc_mix_out.left_input;
     rc.right_rpm_value = rc_mix_out.right_input;
     (void)rc_mix_state; /* available for debug/logging if needed */
@@ -945,7 +948,7 @@ static void fsm_thread_entry(void* parameter) {
           }
 
           memset(&upper_mix_state, 0, sizeof(upper_mix_state));
-          upper_mix_out = mix_rc_to_tracks(&upper_mix_in, &upper_mix_cfg, &upper_mix_tune, &upper_mix_state);
+          upper_mix_out = mix_rc_to_tracks(&upper_mix_in, false, &upper_mix_cfg, &upper_mix_tune, &upper_mix_state);
 
           out_cmd_left.type = CMD_SETPOINT;
           out_cmd_left.rpm_axis1 = upper_mix_out.left_input;

@@ -183,7 +183,7 @@ static void scale_to_limit(float* left, float* right, float limit_abs) {
 }
 
 /* [CALC] core RC mix function */
-motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cfg, const tune_config_t* tune,
+motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st) {
   float throttle, steering, throttle_abs;
   float steering_for_mix;
@@ -208,10 +208,13 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   throttle = apply_deadband_f32(throttle, tune->deadband_throttle);
   steering = apply_deadband_f32(steering, tune->deadband_steering);
 
-  throttle_abs = (throttle >= 0.0f) ? throttle : -throttle;
-  if (throttle_abs >= tune->high_speed_throttle_threshold) {
-    steering = clamp_f32(steering, -tune->max_steering_at_high_speed, tune->max_steering_at_high_speed);
-  }
+	// 
+  if(deive_mode == true){
+		throttle_abs = (throttle >= 0.0f) ? throttle : -throttle;
+		if (throttle_abs >= tune->high_speed_throttle_threshold) {
+			steering = clamp_f32(steering, -tune->max_steering_at_high_speed, tune->max_steering_at_high_speed);
+		}
+	}
 
   steering = clamp_f32(steering * tune->steering_gain, -cfg->max_rc_input, cfg->max_rc_input);
   steering_for_mix = steering;
@@ -256,8 +259,11 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
      */
     apply_turn_shaping(beta, tune->steering_gamma, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg,
                        &beta_abs_dbg, &beta_shaped_dbg, &gamma_dbg, &gamma_enabled_dbg);
-    apply_turn_shaping_dex(throttle, steering_for_mix, beta, &left_ratio, &right_ratio, &dex_over_dbg, &dex_applied_dbg);
-    left_raw = center_input * left_ratio;
+    if(deive_mode == false){
+			apply_turn_shaping_dex(throttle, steering_for_mix, beta, &left_ratio, &right_ratio, &dex_over_dbg, &dex_applied_dbg);
+    }
+		
+		left_raw = center_input * left_ratio;
     right_raw = center_input * right_ratio;
   }
 
