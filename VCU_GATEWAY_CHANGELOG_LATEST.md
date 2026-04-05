@@ -1,5 +1,38 @@
 # VCU Gateway 최근 변경 요약 (최신)
 
+## 0. 2026-04-05 업데이트
+
+### 0.1 RC Mixer 민첩형(Dex) 확장 추가
+- 대상 파일:
+  - `user/rc_mixer.c`
+  - `user/rc_mixer.h`
+- 변경 내용:
+  - 기존 `apply_turn_shaping()`를 base 로직으로 정리
+  - 선택형 민첩형 보정 함수 `apply_turn_shaping_dex()` 추가
+  - 동작 조건:
+    - `throttle != 0`
+    - `|steering| > |throttle|`
+  - 목표:
+    - inner 비율은 최대 `RCM_DEX_INNER_MIN`(기본 `-0.4`)까지 허용
+    - outer 비율은 `1.0 ~ 1.4` 범위까지 확장 가능
+
+### 0.2 Dex 튜닝 파라미터 추가
+- `RCM_DEX_ENABLE` (`0`=OFF, `1`=ON)
+- `RCM_DEX_INNER_MIN` (기본 `-0.4`)
+- `RCM_DEX_OUTER_MAX` (기본 `1.3`, 적용 범위 `1.0~1.4`)
+- `RCM_DEX_BLEND_GAIN` (blend 감도)
+
+### 0.3 디버깅 상태값 확장
+- `calc_state_t`에 아래 필드 추가:
+  - `dex_over`
+  - `dex_applied`
+- 목적:
+  - Dex 조건 진입 여부와 과조향(over) 정도를 로그/모니터링으로 확인
+
+### 0.4 기본 동작 호환성
+- `RCM_DEX_ENABLE=0` 기본값이므로 현재 운영 기본 동작은 기존 base mixer와 동일 유지
+- Dex는 필요 시에만 활성화하여 테스트 가능
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`

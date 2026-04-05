@@ -24,6 +24,12 @@
 #define RCM_MIN_INNER_RATIO               (0.0f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
 #define RCM_MIN_OUTER_RATIO               (0.90f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
+/* [TUNE-DEX] Agile mixer extension (optional) */
+#define RCM_DEX_ENABLE        (0u)    /* 0: base only, 1: base + dex shaping */
+#define RCM_DEX_INNER_MIN     (-0.4f) /* when |steering|>|throttle|, inner can go down to this value */
+#define RCM_DEX_OUTER_MAX     (1.3f)  /* when |steering|>|throttle|, outer can rise up to this value */
+#define RCM_DEX_BLEND_GAIN    (1.0f)  /* dex blend sensitivity */
+
 /* [INPUT] RC command input set */
 typedef struct {
   /* Forward/backward command (-max_rc_input ~ +max_rc_input) */
@@ -92,6 +98,9 @@ typedef struct {
   float beta_abs;
   float inner_ratio;
   float outer_ratio;
+  /* Dex shaping debug values */
+  float dex_over;
+  float dex_applied;
   /* Final left command after gain/saturation */
   float left_input_final;
   /* Final right command after gain/saturation */

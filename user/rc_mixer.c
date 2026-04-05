@@ -38,7 +38,7 @@ static float apply_deadband_f32(float v, float deadband) {
  * - prevent inner track from collapsing too early to zero
  * - reduce outer track slightly on sharp turns
  */
-static void apply_turn_shaping(float steering_raw, float throttle_raw,float beta, float* left_ratio, float* right_ratio, float* inner_ratio_out,
+static void apply_turn_shaping(float beta, float* left_ratio, float* right_ratio, float* inner_ratio_out,
                                float* outer_ratio_out) {
   float beta_abs, inner_ratio, outer_ratio;
 
@@ -49,9 +49,6 @@ static void apply_turn_shaping(float steering_raw, float throttle_raw,float beta
   inner_ratio = 1.0f - beta_abs;
   if (inner_ratio < RCM_MIN_INNER_RATIO)
     inner_ratio = RCM_MIN_INNER_RATIO;
-	if(-steering_raw > throttle_raw)
-		inner_ratio = -0.40;
-	
 
   outer_ratio = 1.0f - (RCM_TURN_SHARPNESS * beta_abs);
   outer_ratio = clamp_f32(outer_ratio, RCM_MIN_OUTER_RATIO, 1.0f);
@@ -73,6 +70,66 @@ static void apply_turn_shaping(float steering_raw, float throttle_raw,float beta
     *inner_ratio_out = inner_ratio;
   if (outer_ratio_out)
     *outer_ratio_out = outer_ratio;
+}
+
+/* [CALC-DEX] agile extension:
+ * if |steering| exceeds |throttle| during driving, allow:
+ * - inner ratio down to negative (up to RCM_DEX_INNER_MIN)
+ * - outer ratio up above 1.0 (up to RCM_DEX_OUTER_MAX)
+ */
+static void apply_turn_shaping_dex(float throttle_raw, float steering_raw, float beta, float* left_ratio, float* right_ratio,
+                                   float* dex_over_out, float* dex_applied_out) {
+  float t_abs, s_abs, over, gain, inner_target, outer_target;
+  float* inner_ratio_ptr;
+  float* outer_ratio_ptr;
+
+  if (!left_ratio || !right_ratio)
+    return;
+
+  if (dex_over_out)
+    *dex_over_out = 0.0f;
+  if (dex_applied_out)
+    *dex_applied_out = 0.0f;
+
+  if (RCM_DEX_ENABLE == 0u)
+    return;
+
+  t_abs = (throttle_raw >= 0.0f) ? throttle_raw : -throttle_raw;
+  s_abs = (steering_raw >= 0.0f) ? steering_raw : -steering_raw;
+
+  /* In-place is handled by another path. */
+  if (t_abs <= 0.0f)
+    return;
+
+  if (s_abs <= t_abs)
+    return;
+
+  over = (s_abs - t_abs) / RCM_MAX_RC_INPUT;
+  over = clamp_f32(over, 0.0f, 1.0f);
+  gain = clamp_f32(over * RCM_DEX_BLEND_GAIN, 0.0f, 1.0f);
+
+  inner_target = RCM_DEX_INNER_MIN;
+  outer_target = clamp_f32(RCM_DEX_OUTER_MAX, 1.0f, 1.4f);
+
+  if (beta > 0.0f) {
+    /* steering > 0: left is outer, right is inner */
+    outer_ratio_ptr = left_ratio;
+    inner_ratio_ptr = right_ratio;
+  } else if (beta < 0.0f) {
+    /* steering < 0: right is outer, left is inner */
+    inner_ratio_ptr = left_ratio;
+    outer_ratio_ptr = right_ratio;
+  } else {
+    return;
+  }
+
+  *inner_ratio_ptr = *inner_ratio_ptr + (inner_target - *inner_ratio_ptr) * gain;
+  *outer_ratio_ptr = *outer_ratio_ptr + (outer_target - *outer_ratio_ptr) * gain;
+
+  if (dex_over_out)
+    *dex_over_out = over;
+  if (dex_applied_out)
+    *dex_applied_out = 1.0f;
 }
 
 /* [CALC] saturation by common ratio scaling */
@@ -98,6 +155,7 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
   float throttle, steering, throttle_abs;
   float steering_for_mix, beta_abs;
   float center_input, beta, left_ratio, right_ratio, inner_ratio_dbg, outer_ratio_dbg;
+  float dex_over_dbg, dex_applied_dbg;
   float left_raw, right_raw;
   float left_logical, right_logical;
   float left_final, right_final;
@@ -152,11 +210,14 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
     right_ratio = -1.0f;
     inner_ratio_dbg = 1.0f;
     outer_ratio_dbg = 1.0f;
+    dex_over_dbg = 0.0f;
+    dex_applied_dbg = 0.0f;
   } else {
     /* Normal steering path:
      * shape both outer/inner ratios to avoid abrupt inner zero.
      */
-    apply_turn_shaping(steering_for_mix, throttle_abs, beta, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg);
+    apply_turn_shaping(beta, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg);
+    apply_turn_shaping_dex(throttle, steering_for_mix, beta, &left_ratio, &right_ratio, &dex_over_dbg, &dex_applied_dbg);
     left_raw = center_input * left_ratio;
     right_raw = center_input * right_ratio;
   }
@@ -189,6 +250,8 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const vehicle_config_t* cf
     st->right_ratio = right_ratio;
     st->inner_ratio = inner_ratio_dbg;
     st->outer_ratio = outer_ratio_dbg;
+    st->dex_over = dex_over_dbg;
+    st->dex_applied = dex_applied_dbg;
 
     if (beta == 0.0f) {
       st->radius_m = 0.0f; /* straight */
