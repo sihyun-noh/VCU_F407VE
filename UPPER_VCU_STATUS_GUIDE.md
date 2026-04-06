@@ -11,7 +11,7 @@
 
 ### `control_src`
 - 현재 제어 권한 소스
-- 내부 상태이며 `vcu_fsm_status_mask(data[5])` 구성에 사용
+- 내부 상태이며 `fsm_status_mask(data[5])` 구성에 사용
 - 값:
   - `0`: 정지/무제어(`SRC_NONE`)
   - `1`: RC 제어(`SRC_RC`)
@@ -19,7 +19,7 @@
 
 ### `stop_reason`
 - 정지 원인 코드
-- 내부 상태이며 `vcu_fsm_status_mask(data[5])` 해석 보조용
+- 내부 상태이며 `fsm_status_mask(data[5])` 해석 보조용
 - 값:
   - `0`: 정지 원인 없음(`FSM_STOP_REASON_NONE`)
   - `1`: upper 강제 정지(`FSM_STOP_UPPER_FORCE`)
@@ -57,18 +57,18 @@
   - `rc.failsafe`는 SBUS 수신 데이터가 전달하는 RC connect/disconnect 상태 신호
   - 따라서 `rc.valid`만으로 failsafe 상태를 대체 해석하면 안 됨
 
-### `vcu_fsm_status_mask`
-- VCU FSM 상태 비트마스크
+### `fsm_status_mask`
+- FSM 상태 비트마스크
 - CAN `data[5]`
 - 비트 정의:
-  - bit0: `VCU_ST_SRC_NONE`
-  - bit1: `VCU_ST_SRC_RC`
-  - bit2: `VCU_ST_SRC_UPPER`
-  - bit3: `VCU_ST_STOP_UPPER`
-  - bit4: `VCU_ST_STOP_RC_EMG`
-  - bit5: `VCU_ST_STOP_MOTOR_FAULT`
-  - bit6: `VCU_ST_STOP_TIMEOUT`
-  - bit7: `VCU_ST_RUNNING`
+  - bit0: `FSM_ST_MODE_SAFE_STOP`
+  - bit1: `FSM_ST_MODE_MANUAL_RC`
+  - bit2: `FSM_ST_MODE_AUTO_ARMED`
+  - bit3: `FSM_ST_MODE_AUTO_ACTIVE`
+  - bit4: `FSM_ST_STOP_UPPER_FORCE`
+  - bit5: `FSM_ST_STOP_RC_EMG`
+  - bit6: `FSM_ST_STOP_MOTOR_FAULT`
+  - bit7: `FSM_ST_STOP_TIMEOUT`
 
 ### `relay_st`
 - 릴레이 동작 상태(bit mask)
@@ -91,7 +91,7 @@
 - `data[2]` = `md_left_fault_msg`
 - `data[3]` = `md_right_fault_msg`
 - `data[4]` = `rc_status_mask`
-- `data[5]` = `vcu_fsm_status_mask`
+- `data[5]` = `fsm_status_mask`
 - `data[6]` = `relay_st`
 - `data[7]` = `timeout_detail_code`
 
@@ -108,16 +108,16 @@
 - `control_src=1`
 - `stop_reason=0`
 - `rc_status_mask=0x09` (enable + fresh)
-- `vcu_fsm_status_mask=0x82` (SRC_RC + RUNNING)
+- `fsm_status_mask=0x02` (`MANUAL_RC`)
 
 ### 예시 B: Upper 강제 정지
 - `control_src=0`
 - `stop_reason=1`
-- `vcu_fsm_status_mask`에 `SRC_NONE + STOP_UPPER`
+- `fsm_status_mask`에 `SAFE_STOP + STOP_UPPER_FORCE`
 
 ### 예시 C: timeout 정지 + 원인 추적
 - `stop_reason=4`
-- `vcu_fsm_status_mask`에 `STOP_TIMEOUT`
+- `fsm_status_mask`에 `SAFE_STOP + STOP_TIMEOUT`
 - `timeout_detail_code=3` 이면 upper drive timeout
 
 ## 6) 관련 프레임 참고

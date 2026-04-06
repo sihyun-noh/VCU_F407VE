@@ -93,9 +93,10 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   fsm_control_src_t control_src;
+  vcu_fsm_mode_t fsm_mode;
   fsm_stop_reason_t stop_reason;
   uint8_t rc_status_mask;      /* RC status bit mask */
-  uint8_t vcu_fsm_status_mask; /* VCU FSM status bit mask */
+  uint8_t fsm_status_mask;     /* FSM status bit mask (0x18FF0310 data[5]) */
   int16_t power_supply_value;  /* data[0:1] for 0x18FF0310 */
   uint8_t md_left_fault_msg;   /* motor driver left */
   uint8_t md_right_fault_msg;  /* motor driver right */
@@ -251,6 +252,51 @@ static uint8_t make_timeout_detail_code(bool rc_timeout, bool upper_cfg_timeout,
 static bool is_upper_auto_handover_ready(bool rc_active, bool rc_remote_automation, bool upper_cfg_valid,
                                          bool upper_automation) {
   return (rc_active && rc_remote_automation && upper_cfg_valid && upper_automation);
+}
+
+static vcu_fsm_mode_t decide_fsm_mode(bool rc_active, bool rc_remote_automation, bool upper_auto_ready,
+                                      fsm_control_src_t control_src, fsm_stop_reason_t stop_reason) {
+  if (control_src == FSM_CTRL_SRC_STOP || stop_reason != FSM_STOP_REASON_NONE)
+    return FSM_MODE_SAFE_STOP;
+  if (control_src == FSM_CTRL_SRC_UPPER)
+    return FSM_MODE_AUTO_ACTIVE;
+  if (rc_active && rc_remote_automation && !upper_auto_ready)
+    return FSM_MODE_AUTO_ARMED;
+  if (control_src == FSM_CTRL_SRC_RC)
+    return FSM_MODE_MANUAL_RC;
+  return FSM_MODE_SAFE_STOP;
+}
+
+static uint8_t pack_fsm_status_mask(vcu_fsm_mode_t mode, fsm_stop_reason_t reason) {
+  uint8_t mask = 0;
+  switch (mode) {
+    case FSM_MODE_SAFE_STOP:
+      mask |= FSM_ST_MODE_SAFE_STOP;
+      break;
+    case FSM_MODE_MANUAL_RC:
+      mask |= FSM_ST_MODE_MANUAL_RC;
+      break;
+    case FSM_MODE_AUTO_ARMED:
+      mask |= FSM_ST_MODE_AUTO_ARMED;
+      break;
+    case FSM_MODE_AUTO_ACTIVE:
+      mask |= FSM_ST_MODE_AUTO_ACTIVE;
+      break;
+    default:
+      mask |= FSM_ST_MODE_SAFE_STOP;
+      break;
+  }
+
+  if (reason == FSM_STOP_UPPER_FORCE)
+    mask |= FSM_ST_STOP_UPPER_FORCE;
+  else if (reason == FSM_STOP_RC_EMG)
+    mask |= FSM_ST_STOP_RC_EMG;
+  else if (reason == FSM_STOP_MOTOR_FAULT)
+    mask |= FSM_ST_STOP_MOTOR_FAULT;
+  else if (reason == FSM_STOP_TIMEOUT)
+    mask |= FSM_ST_STOP_TIMEOUT;
+
+  return mask;
 }
 
 static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
@@ -566,7 +612,7 @@ static void pack_upper_status(const upper_status_t* st, uint8_t out[8]) {
   out[2] = st->md_left_fault_msg;
   out[3] = st->md_right_fault_msg;
   out[4] = st->rc_status_mask;
-  out[5] = st->vcu_fsm_status_mask;
+  out[5] = st->fsm_status_mask;
   out[6] = st->relay_st;
   out[7] = st->timeout_detail_code;
 }
@@ -1052,25 +1098,9 @@ static void fsm_thread_entry(void* parameter) {
     out_rpm_st.driver_right_axis2_rpm =
         (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
 
-    out_st.vcu_fsm_status_mask = 0;
-    if (out_st.control_src == FSM_CTRL_SRC_STOP)
-      out_st.vcu_fsm_status_mask |= VCU_ST_SRC_NONE;
-    else if (out_st.control_src == FSM_CTRL_SRC_RC)
-      out_st.vcu_fsm_status_mask |= VCU_ST_SRC_RC;
-    else if (out_st.control_src == FSM_CTRL_SRC_UPPER)
-      out_st.vcu_fsm_status_mask |= VCU_ST_SRC_UPPER;
-
-    if (out_cmd_left.type == CMD_SETPOINT)
-      out_st.vcu_fsm_status_mask |= VCU_ST_RUNNING;
-
-    if (out_st.stop_reason == FSM_STOP_UPPER_FORCE)
-      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_UPPER;
-    else if (out_st.stop_reason == FSM_STOP_RC_EMG)
-      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_RC_EMG;
-    else if (out_st.stop_reason == FSM_STOP_MOTOR_FAULT)
-      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_MOTOR_FAULT;
-    else if (out_st.stop_reason == FSM_STOP_TIMEOUT)
-      out_st.vcu_fsm_status_mask |= VCU_ST_STOP_TIMEOUT;
+    out_st.fsm_mode =
+        decide_fsm_mode(rc_active, rc.rc_remote_automation, upper_auto_ready, out_st.control_src, out_st.stop_reason);
+    out_st.fsm_status_mask = pack_fsm_status_mask(out_st.fsm_mode, out_st.stop_reason);
 
     /* Command-based monitoring:
      * Integrate heading/distance from commanded left/right inputs (out_cmd),

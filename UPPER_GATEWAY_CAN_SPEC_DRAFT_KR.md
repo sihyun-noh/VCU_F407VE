@@ -102,7 +102,7 @@
 | 2 | `md_left_fault_msg` | `uint8` | Driver1 fault |
 | 3 | `md_right_fault_msg` | `uint8` | Driver2 fault |
 | 4 | `rc_status_mask` | `uint8` | RC 상태 비트마스크 |
-| 5 | `vcu_fsm_status_mask` | `uint8` | VCU FSM 비트마스크 |
+| 5 | `fsm_status_mask` | `uint8` | FSM 상태 비트마스크 |
 | 6 | `relay_st` | `uint8` | 릴레이 상태 |
 | 7 | `timeout_detail_code` | `uint8` | timeout 원인 상세 코드 |
 
@@ -121,25 +121,26 @@ RC status bitmask (`data[4]`):
 - `rc.failsafe`는 SBUS 수신 데이터가 전달하는 RC 연결 상태(disconnect/connect) 신호입니다.
 - 따라서 `rc.valid`만으로 failsafe를 판단하면 안 됩니다.
 
-VCU FSM status bitmask (`data[5]`):
-- bit0: `VCU_ST_SRC_NONE`
-- bit1: `VCU_ST_SRC_RC`
-- bit2: `VCU_ST_SRC_UPPER`
-- bit3: `VCU_ST_STOP_UPPER`
-- bit4: `VCU_ST_STOP_RC_EMG`
-- bit5: `VCU_ST_STOP_MOTOR_FAULT`
-- bit6: `VCU_ST_STOP_TIMEOUT`
-- bit7: `VCU_ST_RUNNING`
+FSM status bitmask (`data[5]`):
+- bit0: `FSM_ST_MODE_SAFE_STOP`
+- bit1: `FSM_ST_MODE_MANUAL_RC`
+- bit2: `FSM_ST_MODE_AUTO_ARMED`
+- bit3: `FSM_ST_MODE_AUTO_ACTIVE`
+- bit4: `FSM_ST_STOP_UPPER_FORCE`
+- bit5: `FSM_ST_STOP_RC_EMG`
+- bit6: `FSM_ST_STOP_MOTOR_FAULT`
+- bit7: `FSM_ST_STOP_TIMEOUT`
 
 비트 발생 조건:
-- `bit0`: STOP 소스(활성 제어 소스 없음)
-- `bit1`: RC 제어 경로 선택
-- `bit2`: Upper 제어 경로 선택
-- `bit3`: upper_force_stop 활성
-- `bit4`: RC 비상정지 활성
-- `bit5`: 모터 fault 발생
-- `bit6`: freshness timeout 발생
-- `bit7`: `CMD_SETPOINT` 운전 중
+- 모드 비트(bit0~bit3)는 one-hot으로 사용
+- `bit0 SAFE_STOP`: STOP 경로이거나 stop reason 존재
+- `bit1 MANUAL_RC`: RC 주행 모드(`rc_ok && rc_enable`), 자동전환 비활성
+- `bit2 AUTO_ARMED`: RC 자동화 요청은 있으나 Upper 자동전환 미성립
+- `bit3 AUTO_ACTIVE`: Upper 제어 경로 활성(강제 Upper 또는 자동전환 성립)
+- `bit4 UPPER_FORCE`: stop reason이 upper force stop
+- `bit5 RC_EMG`: stop reason이 RC 비상정지
+- `bit6 MOTOR_FAULT`: stop reason이 모터 fault
+- `bit7 TIMEOUT`: stop reason이 timeout
 
 timeout detail code (`data[7]`):
 - `0`: `TO_NONE`

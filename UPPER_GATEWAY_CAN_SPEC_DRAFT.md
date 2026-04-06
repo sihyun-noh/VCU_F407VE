@@ -102,7 +102,7 @@ Motor driver apply rule (current code):
 | 2 | `md_left_fault_msg` | `uint8` | Driver 1 fault bits |
 | 3 | `md_right_fault_msg` | `uint8` | Driver 2 fault bits |
 | 4 | `rc_status_mask` | `uint8` | RC status bit mask |
-| 5 | `vcu_fsm_status_mask` | `uint8` | VCU FSM bit mask |
+| 5 | `fsm_status_mask` | `uint8` | FSM status bit mask |
 | 6 | `relay_st` | `uint8` | Relay status mask |
 | 7 | `timeout_detail_code` | `uint8` | Timeout source detail code (`TO_*`) |
 
@@ -116,25 +116,26 @@ RC status bit mask (`data[4]`):
 - bit6: `RC_ST_REMOTE_AUTOMATION` (RC transmitter D button / remote automation active)
 - bit7: `RC_ST_DRIVE_MODE` (RC transmitter C button / drive mode: `0=agile`, `1=stable`)
 
-VCU FSM status bit mask (`data[5]`):
-- bit0: `VCU_ST_SRC_NONE`
-- bit1: `VCU_ST_SRC_RC`
-- bit2: `VCU_ST_SRC_UPPER`
-- bit3: `VCU_ST_STOP_UPPER`
-- bit4: `VCU_ST_STOP_RC_EMG`
-- bit5: `VCU_ST_STOP_MOTOR_FAULT`
-- bit6: `VCU_ST_STOP_TIMEOUT`
-- bit7: `VCU_ST_RUNNING`
+FSM status bit mask (`data[5]`):
+- bit0: `FSM_ST_MODE_SAFE_STOP`
+- bit1: `FSM_ST_MODE_MANUAL_RC`
+- bit2: `FSM_ST_MODE_AUTO_ARMED`
+- bit3: `FSM_ST_MODE_AUTO_ACTIVE`
+- bit4: `FSM_ST_STOP_UPPER_FORCE`
+- bit5: `FSM_ST_STOP_RC_EMG`
+- bit6: `FSM_ST_STOP_MOTOR_FAULT`
+- bit7: `FSM_ST_STOP_TIMEOUT`
 
-VCU FSM bit set conditions (why each state occurs):
-- `bit0 VCU_ST_SRC_NONE`: set when control source is STOP state (no active RC/Upper command path selected).
-- `bit1 VCU_ST_SRC_RC`: set when RC control is selected (`rc_ok && rc_enable`) and FSM is driving by RC command.
-- `bit2 VCU_ST_SRC_UPPER`: set when upper control path is selected (fresh upper command path active or force-upper active).
-- `bit3 VCU_ST_STOP_UPPER`: set when upper force stop is requested (`upper_force_stop = 1`).
-- `bit4 VCU_ST_STOP_RC_EMG`: set when RC emergency stop is active (`rc_emergency_stop = 1`).
-- `bit5 VCU_ST_STOP_MOTOR_FAULT`: set when motor status is valid but reports fault bits (motor fault condition).
-- `bit6 VCU_ST_STOP_TIMEOUT`: set when command/status freshness timeout occurs (for example upper drive timeout, motor timeout, or no valid active source path).
-- `bit7 VCU_ST_RUNNING`: set when output command type is `CMD_SETPOINT` (actual setpoint control mode active); cleared in STOP mode.
+FSM status bit set conditions (why each state occurs):
+- Mode bits are one-hot (bit0~bit3).
+- `bit0 SAFE_STOP`: STOP path selected or stop reason exists.
+- `bit1 MANUAL_RC`: RC driving mode (`rc_ok && rc_enable`) without auto-active handover.
+- `bit2 AUTO_ARMED`: RC automation requested but upper auto handover is not active yet.
+- `bit3 AUTO_ACTIVE`: upper control path active (force-upper or auto handover active).
+- `bit4 UPPER_FORCE`: set when stop reason is upper force stop.
+- `bit5 RC_EMG`: set when stop reason is RC emergency stop.
+- `bit6 MOTOR_FAULT`: set when stop reason is motor fault.
+- `bit7 TIMEOUT`: set when stop reason is timeout.
 
 Timeout detail code (`data[7]`) mapping:
 - `0`: `TO_NONE` (no timeout detail)

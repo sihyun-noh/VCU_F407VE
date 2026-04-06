@@ -88,6 +88,28 @@
     - timeout detail 생성 시 `TO_UPPER_CFG`는 현재 hard timeout 경로에서 미사용(예약)
   - relay automation flag도 동일 게이트(`upper_auto_ready`) 기준으로 동작하도록 정합화
 
+### 0.8 FSM 상태 비트마스크(`0x18FF0310 data[5]`) 재정의
+- 대상 파일:
+  - `user/vcu_gateway.h`
+  - `user/vcu_gateway.c`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT.md`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT_KR.md`
+  - `UPPER_VCU_STATUS_GUIDE.md`
+- 변경 내용:
+  - 기존 `VCU_ST_*` 중심 비트 정의를 `FSM_ST_*` 중심으로 재구성
+  - mode 비트(one-hot) 추가:
+    - `FSM_ST_MODE_SAFE_STOP`(bit0)
+    - `FSM_ST_MODE_MANUAL_RC`(bit1)
+    - `FSM_ST_MODE_AUTO_ARMED`(bit2)
+    - `FSM_ST_MODE_AUTO_ACTIVE`(bit3)
+  - stop reason 비트:
+    - `FSM_ST_STOP_UPPER_FORCE`(bit4)
+    - `FSM_ST_STOP_RC_EMG`(bit5)
+    - `FSM_ST_STOP_MOTOR_FAULT`(bit6)
+    - `FSM_ST_STOP_TIMEOUT`(bit7)
+  - `decide_fsm_mode()` + `pack_fsm_status_mask()`로 data[5] 생성 로직 명확화
+  - 기존 `VCU_ST_*` 매크로는 하위 호환 alias로 유지
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`

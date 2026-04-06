@@ -60,15 +60,35 @@ extern "C" {
 #define RC_ST_REMOTE_AUTOMATION (1u << 6) /* rc_remote_automation */
 #define RC_ST_DRIVE_MODE        (1u << 7) /* rc_drive_mode (CH10/C): 0=agile, 1=stable */
 
-/* VCU FSM status bit mask */
-#define VCU_ST_SRC_NONE         (1u << 0) /* control source: none */
-#define VCU_ST_SRC_RC           (1u << 1) /* control source: RC */
-#define VCU_ST_SRC_UPPER        (1u << 2) /* control source: upper */
-#define VCU_ST_STOP_UPPER       (1u << 3) /* stop reason: upper force stop */
-#define VCU_ST_STOP_RC_EMG      (1u << 4) /* stop reason: RC emergency */
-#define VCU_ST_STOP_MOTOR_FAULT (1u << 5) /* stop reason: motor fault */
-#define VCU_ST_STOP_TIMEOUT     (1u << 6) /* stop reason: timeout */
-#define VCU_ST_RUNNING          (1u << 7) /* setpoint control running */
+/* FSM status bit mask for 0x18FF0310 data[5]
+ * mode bits (one-hot):
+ *  - bit0 SAFE_STOP
+ *  - bit1 MANUAL_RC
+ *  - bit2 AUTO_ARMED
+ *  - bit3 AUTO_ACTIVE
+ * stop-reason bits:
+ *  - bit4 UPPER_FORCE
+ *  - bit5 RC_EMG
+ *  - bit6 MOTOR_FAULT
+ *  - bit7 TIMEOUT
+ */
+#define FSM_ST_MODE_SAFE_STOP   (1u << 0)
+#define FSM_ST_MODE_MANUAL_RC   (1u << 1)
+#define FSM_ST_MODE_AUTO_ARMED  (1u << 2)
+#define FSM_ST_MODE_AUTO_ACTIVE (1u << 3)
+#define FSM_ST_STOP_UPPER_FORCE (1u << 4)
+#define FSM_ST_STOP_RC_EMG      (1u << 5)
+#define FSM_ST_STOP_MOTOR_FAULT (1u << 6)
+#define FSM_ST_STOP_TIMEOUT     (1u << 7)
+
+/* Backward-compat aliases (deprecated naming). */
+#define VCU_ST_SRC_NONE         FSM_ST_MODE_SAFE_STOP
+#define VCU_ST_SRC_RC           FSM_ST_MODE_MANUAL_RC
+#define VCU_ST_SRC_UPPER        FSM_ST_MODE_AUTO_ACTIVE
+#define VCU_ST_STOP_UPPER       FSM_ST_STOP_UPPER_FORCE
+#define VCU_ST_STOP_RC_EMG      FSM_ST_STOP_RC_EMG
+#define VCU_ST_STOP_MOTOR_FAULT FSM_ST_STOP_MOTOR_FAULT
+#define VCU_ST_STOP_TIMEOUT     FSM_ST_STOP_TIMEOUT
 
 /* ===================== Motor Driver Bit Masks ===================== */
 /* Data bit masks */
@@ -115,6 +135,13 @@ typedef enum {
   STOP_MOTOR_FAULT = 3,
   STOP_TIMEOUT = 4,
 } vcu_stop_reason_t;
+
+typedef enum {
+  FSM_MODE_SAFE_STOP = 0,
+  FSM_MODE_MANUAL_RC = 1,
+  FSM_MODE_AUTO_ARMED = 2,
+  FSM_MODE_AUTO_ACTIVE = 3,
+} vcu_fsm_mode_t;
 
 typedef struct {
   uint32_t ts_tick; /* update tick */
