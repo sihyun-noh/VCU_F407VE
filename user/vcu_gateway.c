@@ -732,7 +732,11 @@ static void sbus_thread_entry(void* parameter) {
     rc.cultivator_on = (ch.CH6 > 1000);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
-		rc.rc_drive_mode = (ch.CH10 > 1000);
+    /* RC C button (CH10):
+     * true  -> stable mode (high-speed steering clamp ON, DEX OFF)
+     * false -> agile mode  (high-speed steering clamp OFF, DEX ON)
+     */
+    rc.rc_drive_mode = (ch.CH10 > 1000);
     rc.rc_remote_automation = (ch.CH11 > 1000);
 
 

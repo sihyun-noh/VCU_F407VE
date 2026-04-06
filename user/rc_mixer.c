@@ -183,7 +183,7 @@ static void scale_to_limit(float* left, float* right, float limit_abs) {
 }
 
 /* [CALC] core RC mix function */
-motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, const vehicle_config_t* cfg, const tune_config_t* tune,
+motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool drive_mode, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st) {
   float throttle, steering, throttle_abs;
   float steering_for_mix;
@@ -195,10 +195,17 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, con
   float left_logical, right_logical;
   float left_final, right_final;
   float speed_kmh, vc_m_s;
+  const bool stable_mode = drive_mode;
+  const bool agile_mode = !drive_mode;
   motor_output_t out = { 0, 0 };
 
   if (!in || !cfg || !tune)
     return out;
+
+  /* drive_mode policy:
+   * - true  : stable mode (high-speed steering clamp ON, DEX OFF)
+   * - false : agile mode  (high-speed steering clamp OFF, DEX ON)
+   */
 
   /* [INPUT] */
   throttle = clamp_f32(in->throttle, -cfg->max_rc_input, cfg->max_rc_input);
@@ -208,13 +215,13 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, con
   throttle = apply_deadband_f32(throttle, tune->deadband_throttle);
   steering = apply_deadband_f32(steering, tune->deadband_steering);
 
-	// 
-  if(deive_mode == true){
-		throttle_abs = (throttle >= 0.0f) ? throttle : -throttle;
-		if (throttle_abs >= tune->high_speed_throttle_threshold) {
-			steering = clamp_f32(steering, -tune->max_steering_at_high_speed, tune->max_steering_at_high_speed);
-		}
-	}
+  /* Stable mode only: limit steering at high speed for smoother handling. */
+  if (stable_mode) {
+    throttle_abs = (throttle >= 0.0f) ? throttle : -throttle;
+    if (throttle_abs >= tune->high_speed_throttle_threshold) {
+      steering = clamp_f32(steering, -tune->max_steering_at_high_speed, tune->max_steering_at_high_speed);
+    }
+  }
 
   steering = clamp_f32(steering * tune->steering_gain, -cfg->max_rc_input, cfg->max_rc_input);
   steering_for_mix = steering;
@@ -259,11 +266,14 @@ motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, con
      */
     apply_turn_shaping(beta, tune->steering_gamma, &left_ratio, &right_ratio, &inner_ratio_dbg, &outer_ratio_dbg,
                        &beta_abs_dbg, &beta_shaped_dbg, &gamma_dbg, &gamma_enabled_dbg);
-    if(deive_mode == false){
-			apply_turn_shaping_dex(throttle, steering_for_mix, beta, &left_ratio, &right_ratio, &dex_over_dbg, &dex_applied_dbg);
+    dex_over_dbg = 0.0f;
+    dex_applied_dbg = 0.0f;
+    /* Agile mode only: apply DEX extension after base shaping. */
+    if (agile_mode) {
+      apply_turn_shaping_dex(throttle, steering_for_mix, beta, &left_ratio, &right_ratio, &dex_over_dbg, &dex_applied_dbg);
     }
-		
-		left_raw = center_input * left_ratio;
+    
+    left_raw = center_input * left_ratio;
     right_raw = center_input * right_ratio;
   }
 

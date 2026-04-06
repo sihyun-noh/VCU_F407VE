@@ -162,13 +162,15 @@ extern const tune_config_t g_rcm_tune;
 /**
  * @brief Mix RC throttle/steering to left/right track commands.
  * @param in    RC input (throttle, steering)
- * @param drive_mode   
+ * @param drive_mode
+ *                true : stable mode (high-speed steering clamp ON, DEX OFF)
+ *                false: agile mode  (high-speed steering clamp OFF, DEX ON)
  * @param cfg   Vehicle constants/limits
  * @param tune  Tuning parameters
  * @param st    Optional calculation state output (NULL allowed)
  * @return Final left/right driver command pair
  */
-motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool deive_mode, const vehicle_config_t* cfg, const tune_config_t* tune,
+motor_output_t mix_rc_to_tracks(const rc_input_t* in, const bool drive_mode, const vehicle_config_t* cfg, const tune_config_t* tune,
                                 calc_state_t* st);
 
 #endif /* _RC_MIXER_H_ */

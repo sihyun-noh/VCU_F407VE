@@ -56,6 +56,21 @@
   - `calc_state_t`에 `beta_raw`, `beta_shaped`, `gamma`, `gamma_enabled` 추가
   - `rcm_mixer_debug_t` 구조체 추가
 
+### 0.6 RC C버튼 기반 주행 모드 분리 가독성 개선
+- 대상 파일:
+  - `user/vcu_gateway.c`
+  - `user/rc_mixer.c`
+  - `user/rc_mixer.h`
+- 변경 내용:
+  - `CH10`(RC C 버튼)으로 전달되는 `rc_drive_mode` 의미를 코드 주석으로 명확화
+  - mixer 내부 모드 분기 가독성 개선:
+    - `stable_mode=true`  : 고속 조향 제한 ON, DEX OFF
+    - `agile_mode=false` : 고속 조향 제한 OFF, DEX ON
+  - 함수 파라미터 오타 수정:
+    - `deive_mode` -> `drive_mode`
+- 안정성 보강:
+  - stable 모드 경로에서도 `dex_over_dbg`, `dex_applied_dbg`가 항상 초기화되도록 보정
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`
