@@ -51,6 +51,7 @@
   - bit4: `RC_ST_CULTIVATOR_DOWN` (좌 토글)
   - bit5: `RC_ST_CULTIVATOR_ON` (우 토글)
   - bit6: `RC_ST_REMOTE_AUTOMATION` (조종기 D 버튼)
+  - bit7: `RC_ST_DRIVE_MODE` (조종기 C 버튼, 주행 모드: `0=agile`, `1=stable`)
 - 중요 구분:
   - `rc.valid`와 `rc.failsafe`는 동일 개념이 아님
   - `rc.failsafe`는 SBUS 수신 데이터가 전달하는 RC connect/disconnect 상태 신호

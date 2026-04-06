@@ -112,6 +112,7 @@ RC status bit mask (`data[4]`):
 - bit4: `RC_ST_CULTIVATOR_DOWN` (RC left toggle, implement lowered to ground)
 - bit5: `RC_ST_CULTIVATOR_ON` (RC right toggle, weeding/cultivator drive ON)
 - bit6: `RC_ST_REMOTE_AUTOMATION` (RC transmitter D button / remote automation active)
+- bit7: `RC_ST_DRIVE_MODE` (RC transmitter C button / drive mode: `0=agile`, `1=stable`)
 
 VCU FSM status bit mask (`data[5]`):
 - bit0: `VCU_ST_SRC_NONE`

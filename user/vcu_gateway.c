@@ -30,10 +30,10 @@
 typedef struct {
   rt_tick_t ts; /* rt_tick */
   bool valid;
-	bool rc_emergency_stop;    /* RC A button: emergency stop */
+  bool rc_emergency_stop;    /* RC A button: emergency stop */
   bool rc_enable;            /* RC B button: rc enable flag */
   bool rc_remote_automation; /* RC D button: remote automation flag */
-	bool rc_drive_mode;				 /* RC C button: drive flag */
+  bool rc_drive_mode;        /* RC C button: drive flag */
   bool cultivator_down;
   bool cultivator_on;
   int16_t axis1;           /* rc Right stick up/down */
@@ -61,8 +61,8 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  int16_t throttle_cmd; /* upper command */
-  int16_t steering_cmd; /* upper command */
+  int16_t throttle_cmd;          /* upper command */
+  int16_t steering_cmd;          /* upper command */
   uint16_t max_driver_input_cmd; /* data[4:5], absolute max driver input */
   uint16_t max_speed_kmh_x100;   /* data[6:7], max speed km/h * 100 */
 } upper_intent_drive_t;
@@ -739,7 +739,6 @@ static void sbus_thread_entry(void* parameter) {
     rc.rc_drive_mode = (ch.CH10 > 1000);
     rc.rc_remote_automation = (ch.CH11 > 1000);
 
-
     /* [STEP 3] Convert SBUS raw -> control command and then smooth by MA(10). */
     rc.axis1 = sbus_convert_to_control(ch.CH1, rpm_v); /* CH1 raw */
     rc.axis2 = sbus_convert_to_control(ch.CH2, rpm_v); /* CH2 raw */
@@ -857,13 +856,15 @@ static void fsm_thread_entry(void* parameter) {
       out_st.rc_status_mask |= RC_ST_CULTIVATOR_ON;
     if (rc.rc_remote_automation)
       out_st.rc_status_mask |= RC_ST_REMOTE_AUTOMATION;
+    if (rc.rc_drive_mode)
+      out_st.rc_status_mask |= RC_ST_DRIVE_MODE;
 
     /* motor driver status mapping */
     out_st.md_left_fault_msg = (uint8_t)(motor_left_st.fault_bits & 0xFF);
     out_st.md_right_fault_msg = (uint8_t)(motor_right_st.fault_bits & 0xFF);
     out_st.relay_st = upper.relay_mask;
     out_st.power_supply_value =
-      (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, -rcm_max_driver_i32(), rcm_max_driver_i32());
+        (int16_t)clamp_i32((int32_t)motor_left_st.supply_volt, -rcm_max_driver_i32(), rcm_max_driver_i32());
 
     /* STOP conditions (highest priority) */
     if (upper_force_stop) {
@@ -913,10 +914,9 @@ static void fsm_thread_entry(void* parameter) {
        */
       bool rc_active = (rc_ok && rc.rc_enable);
       bool force_upper = (upper.upper_force_active == 1);
-			
 
       if (force_upper || (!rc_active && upper_ok)) {
-        //rt_kprintf("stop_reason :upper_ok \n");
+        // rt_kprintf("stop_reason :upper_ok \n");
         out_cmd_left.src = FSM_CTRL_SRC_UPPER;
         out_cmd_right.src = FSM_CTRL_SRC_UPPER;
 
@@ -943,12 +943,11 @@ static void fsm_thread_entry(void* parameter) {
 
           /* Optional runtime limits from upper drive frame (0x18FF0200 data[4:7]). */
           if (upper_drive.max_driver_input_cmd > 0u) {
-            upper_mix_cfg.max_driver_input =
-              (float)clamp_i32((int32_t)upper_drive.max_driver_input_cmd, 1, 32767);
+            upper_mix_cfg.max_driver_input = (float)clamp_i32((int32_t)upper_drive.max_driver_input_cmd, 1, 32767);
           }
           if (upper_drive.max_speed_kmh_x100 > 0u) {
             upper_mix_cfg.max_speed_kmh =
-              ((float)clamp_i32((int32_t)upper_drive.max_speed_kmh_x100, 1, 10000)) / 100.0f;
+                ((float)clamp_i32((int32_t)upper_drive.max_speed_kmh_x100, 1, 10000)) / 100.0f;
           }
 
           memset(&upper_mix_state, 0, sizeof(upper_mix_state));
@@ -967,7 +966,7 @@ static void fsm_thread_entry(void* parameter) {
         if (out_st.stop_reason != FSM_STOP_TIMEOUT)
           out_st.stop_reason = FSM_STOP_REASON_NONE;
       } else if (rc_active) {
-        //rt_kprintf("stop_reason :rc_ok \n");
+        // rt_kprintf("stop_reason :rc_ok \n");
         out_cmd_left.src = FSM_CTRL_SRC_RC;
         out_cmd_left.type = CMD_SETPOINT;
         out_cmd_right.src = FSM_CTRL_SRC_RC;
@@ -983,7 +982,7 @@ static void fsm_thread_entry(void* parameter) {
         out_st.stop_reason = FSM_STOP_REASON_NONE;
       } else {
 
-        //rt_kprintf("stop_reason : none \n");
+        // rt_kprintf("stop_reason : none \n");
         out_cmd_left.src = FSM_CTRL_SRC_STOP;
         out_cmd_left.type = CMD_STOP;
         out_cmd_right.src = FSM_CTRL_SRC_STOP;
@@ -995,23 +994,21 @@ static void fsm_thread_entry(void* parameter) {
       }
     }
 
-		/*chcek relay on/off of automation flag */
+    /*chcek relay on/off of automation flag */
     /*if both automation on to the automation operation*/
-		bool automation_flag = (upper.automation == 1 && rc.rc_remote_automation);
-		uint8_t bit_mask = 0;
-		
-		if(automation_flag){
-			OpenCloseIO_Out(1, 1);
-			bit_mask = 1 << 1;
-			out_st.relay_st |= bit_mask;
-		}
-		else{
-			OpenCloseIO_Out(1, 0);
-			bit_mask = 1 << 0;
-			out_st.relay_st |= bit_mask;
-			}
-		
-		
+    bool automation_flag = (upper.automation == 1 && rc.rc_remote_automation);
+    uint8_t bit_mask = 0;
+
+    if (automation_flag) {
+      OpenCloseIO_Out(1, 1);
+      bit_mask = 1 << 1;
+      out_st.relay_st |= bit_mask;
+    } else {
+      OpenCloseIO_Out(1, 0);
+      bit_mask = 1 << 0;
+      out_st.relay_st |= bit_mask;
+    }
+
     /* Apply same default driver configuration to left/right.
      * Accept upper-supplied config only when enable bits are BOTH_ENABLE.
      */
@@ -1030,13 +1027,13 @@ static void fsm_thread_entry(void* parameter) {
     memset(&out_rpm_st, 0, sizeof(out_rpm_st));
     out_rpm_st.ts = now;
     out_rpm_st.driver_left_axis1_rpm =
-      (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, -rcm_max_driver_i32(), rcm_max_driver_i32());
+        (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis1, -rcm_max_driver_i32(), rcm_max_driver_i32());
     out_rpm_st.driver_left_axis2_rpm =
-      (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
+        (int16_t)clamp_i32((int32_t)motor_left_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
     out_rpm_st.driver_right_axis1_rpm =
-      (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, -rcm_max_driver_i32(), rcm_max_driver_i32());
+        (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis1, -rcm_max_driver_i32(), rcm_max_driver_i32());
     out_rpm_st.driver_right_axis2_rpm =
-      (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
+        (int16_t)clamp_i32((int32_t)motor_right_st.rpm_axis2, -rcm_max_driver_i32(), rcm_max_driver_i32());
 
     out_st.vcu_fsm_status_mask = 0;
     if (out_st.control_src == FSM_CTRL_SRC_STOP)

@@ -112,6 +112,7 @@ RC status bitmask (`data[4]`):
 - bit4: `RC_ST_CULTIVATOR_DOWN` (좌 토글, 작업기 하강)
 - bit5: `RC_ST_CULTIVATOR_ON` (우 토글, 제초기 ON)
 - bit6: `RC_ST_REMOTE_AUTOMATION` (조종기 D 버튼, remote automation)
+- bit7: `RC_ST_DRIVE_MODE` (조종기 C 버튼, 주행 모드: `0=agile`, `1=stable`)
 
 주의 (`rc.valid` vs `rc.failsafe`):
 - `rc.valid`와 `rc.failsafe`는 서로 다른 의미입니다.

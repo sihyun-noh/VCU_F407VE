@@ -40,22 +40,23 @@ extern "C" {
 #define SBUS_TIMEOUT_MS        1000u
 
 /* Timeout detail code for 0x18FF0310 data[7] */
-#define TO_NONE            (0u)
-#define TO_RC              (1u)
-#define TO_UPPER_CFG       (2u)
-#define TO_UPPER_DRIVE     (3u)
-#define TO_MOTOR_LEFT      (4u)
-#define TO_MOTOR_RIGHT     (5u)
-#define TO_MULTIPLE        (6u)
+#define TO_NONE        (0u)
+#define TO_RC          (1u)
+#define TO_UPPER_CFG   (2u)
+#define TO_UPPER_DRIVE (3u)
+#define TO_MOTOR_LEFT  (4u)
+#define TO_MOTOR_RIGHT (5u)
+#define TO_MULTIPLE    (6u)
 
 /* RC status bit mask */
-#define RC_ST_ENABLE          (1u << 0) /* rc_enable */
-#define RC_ST_EMERGENCY_STOP  (1u << 1) /* rc_emergency_stop */
-#define RC_ST_FAILSAFE        (1u << 2) /* failsafe */
-#define RC_ST_FRESH           (1u << 3) /* real-time RC freshness (not fresh => timeout state) */
-#define RC_ST_CULTIVATOR_DOWN (1u << 4) /* cultivator_down */
-#define RC_ST_CULTIVATOR_ON   (1u << 5) /* cultivator_on */
+#define RC_ST_ENABLE            (1u << 0) /* rc_enable */
+#define RC_ST_EMERGENCY_STOP    (1u << 1) /* rc_emergency_stop */
+#define RC_ST_FAILSAFE          (1u << 2) /* failsafe */
+#define RC_ST_FRESH             (1u << 3) /* real-time RC freshness (not fresh => timeout state) */
+#define RC_ST_CULTIVATOR_DOWN   (1u << 4) /* cultivator_down */
+#define RC_ST_CULTIVATOR_ON     (1u << 5) /* cultivator_on */
 #define RC_ST_REMOTE_AUTOMATION (1u << 6) /* rc_remote_automation */
+#define RC_ST_DRIVE_MODE        (1u << 7) /* rc_drive_mode (CH10/C): 0=agile, 1=stable */
 
 /* VCU FSM status bit mask */
 #define VCU_ST_SRC_NONE         (1u << 0) /* control source: none */
@@ -129,7 +130,6 @@ typedef vcu_stop_reason_t fsm_stop_reason_t;
 #define FSM_STOP_RC_EMG      STOP_RC_EMG
 #define FSM_STOP_MOTOR_FAULT STOP_MOTOR_FAULT
 #define FSM_STOP_TIMEOUT     STOP_TIMEOUT
-
 
 typedef struct {
   uint32_t ts_tick; /* update tick */
