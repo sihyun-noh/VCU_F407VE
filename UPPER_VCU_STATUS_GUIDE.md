@@ -124,5 +124,7 @@
 - `0x18FF0300`: 모터 RPM 피드백 (`±664` clamp)
 - `0x18FF0320`: 차량 운동 상태(yaw/yaw rate/speed)
 - `0x18FF0330`: 테스트/디버그 모니터
+  - `data[4:5]`는 IMU gyro Z 기반 yaw rate(deg/s*10)를 우선 사용
+  - IMU 값이 유효하지 않으면 명령 기반 yaw rate로 fallback
 - `0x18FF0200`: Upper drive cmd (`throttle/steering + runtime max`)
 - `0x18FF0210`: Upper config (`automation + relay + accel`)

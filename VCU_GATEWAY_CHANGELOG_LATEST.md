@@ -110,6 +110,28 @@
   - `decide_fsm_mode()` + `pack_fsm_status_mask()`로 data[5] 생성 로직 명확화
   - 기존 `VCU_ST_*` 매크로는 하위 호환 alias로 유지
 
+### 0.9 Upper AUTO CMD + MPU 모니터링 연동
+- 대상 파일:
+  - `user/vcu_gateway.h`
+  - `user/vcu_gateway.c`
+  - `user/main.c`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT.md`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT_KR.md`
+  - `UPPER_VCU_STATUS_GUIDE.md`
+- 변경 내용:
+  - 신규 Upper 자동주행 명령 ID 추가:
+    - `0x18FF0220` (`linear_mps_x1000`, `yaw_rate_deg_s_x10`)
+  - Upper 제어 경로 통일:
+    - `force_upper_active` / auto handover 모두 `0x18FF0220` 기반 경로 사용
+  - AUTO 혼합 방식 선택 매크로 추가 (`vcu_gateway.h`):
+    - `UPPER_AUTO_MIX_MODE_KINEMATIC`
+    - `UPPER_AUTO_MIX_MODE_RC_MIXER`
+    - `UPPER_AUTO_MIX_MODE`로 선택
+  - MPU6050 모니터링 연결:
+    - `main`에서 `bsp_MPU6050_thread()` 활성화
+    - `vcu_motion_monitor_t`에 `imu_yaw_rate_deg_s`, `imu_yaw_rate_valid` 추가
+    - `0x18FF0330 data[4:5]`는 IMU gyro Z 기반 yaw rate 우선, 미유효 시 명령 기반 fallback
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`

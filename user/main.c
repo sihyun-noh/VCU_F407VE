@@ -9,6 +9,7 @@
 #include "main.h"
 #include "board.h"
 #include "spi.h"
+#include "MPU6050.h"
 
 #include "vcu_gateway.h"
 
@@ -67,7 +68,7 @@ int main(void) {
 	}
 	*/
   // bsp_battery_thread();				//ad�ɼ�����
-  // bsp_MPU6050_thread();				//����̬
+    bsp_MPU6050_thread();				//����̬
   // bsp_TH_thread();   					//����ʪ��
 
   // bsp_motor1_thread(111);				//СԲ���������

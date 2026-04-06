@@ -11,7 +11,7 @@
   - `fsm_thread`: 10ms
   - `can_tx_thread`: 100ms
 - 주요 ID:
-  - Upper->Gateway: `0x18FF0200`, `0x18FF0210`
+  - Upper->Gateway: `0x18FF0200`, `0x18FF0210`, `0x18FF0220`
   - Gateway->Upper: `0x18FF0300`, `0x18FF0310`, `0x18FF0320`, `0x18FF0330`
 
 ## 3. 스케일/인코딩 기준
@@ -35,6 +35,7 @@
 |---|---|---|---|---|---|
 | TC-001 | RC 정상 주행 | RC enable ON, estop OFF, failsafe OFF, fresh 유지 | throttle/steering 입력 | `0310:data[5]` SRC_RC+RUNNING, STOP 비트 0, `data[7]=0` | ☐ |
 | TC-002 | Upper 정상 주행 | `0200` 주기 입력 + `0210` fresh | RC 비활성 상태에서 upper 명령 인가 | `0310:data[5]` SRC_UPPER+RUNNING, `data[7]=0` | ☐ |
+| TC-002A | Upper AUTO 정상 주행 | `0220` 주기 입력 + `0210 automation=1` + RC remote automation | AUTO handover 성립 후 주행 | `0310:data[5]` AUTO_ACTIVE+RUNNING, `data[7]=0` | ☐ |
 | TC-003 | Upper 강제 선택 | RC 활성 + `0210 upper_force_active=1` | RC 입력 유지 중 upper cmd 인가 | RC 활성이어도 SRC_UPPER 선택 | ☐ |
 | TC-004 | Upper force stop | `0210 upper_force_stop=1` | force stop bit set | 즉시 STOP, `STOP_UPPER=1` | ☐ |
 | TC-005 | RC E-STOP | RC estop(A 버튼) ON | RC 주행 중 estop ON | 즉시 STOP, `STOP_RC_EMG=1` | ☐ |
@@ -53,6 +54,8 @@
 | TC-018 | 0210 accel fallback | upper_ok false | 0210 끊김 상태 | accel 기본값 `0x64` 복귀 | ☐ |
 | TC-019 | 0300 피드백 맵 검증 | motor status 정상 입력 | 수신->송신 연계 확인 | `0300`의 axis1/2 값 매핑/부호 일치 | ☐ |
 | TC-020 | 0310 timeout detail 복합 | 복수 timeout 유도 | RC+Upper 동시 끊김 등 | `data[7]=TO_MULTIPLE(6)` | ☐ |
+| TC-021 | MPU yaw 반영(0330) | MPU thread 동작 + gyro z 유효 | steering 입력/회전 후 `0330` 확인 | `0330:data[4:5]`가 IMU yaw rate(deg/s x10) 우선 반영 | ☐ |
+| TC-022 | MPU fallback 검증 | MPU 미동작/무효 | 동일 조건에서 `0330` 확인 | `0330:data[4:5]`가 명령기반 yaw rate fallback 반영 | ☐ |
 
 ## 6. bitmask 빠른 체크표
 
@@ -96,4 +99,3 @@
 | TC-001 |  |  |  |
 | TC-002 |  |  |  |
 | ... |  |  |  |
-

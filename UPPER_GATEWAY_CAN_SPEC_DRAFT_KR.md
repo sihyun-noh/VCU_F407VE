@@ -170,7 +170,7 @@ timeout detail code (`data[7]`):
 | 1 | `steering_percent` | `int8` | -100..100 |
 | 2 | `left_cmd_percent` | `int8` | -100..100 |
 | 3 | `right_cmd_percent` | `int8` | -100..100 |
-| 4:5 | `yaw_rate_deg_s_x10` | `int16` | deg/s * 10 |
+| 4:5 | `yaw_rate_deg_s_x10` | `int16` | IMU gyro Z deg/s * 10 (없으면 명령기반 yaw rate) |
 | 6:7 | `center_distance_m_x100` | `int16` | m * 100 |
 
 ## 6. 제어 우선순위 (현재 코드)

@@ -21,6 +21,7 @@
 #include <rtthread.h>
 
 #include "CAN_AGMO.h"
+#include "MPU6050.h"
 #include "SBUS_AGMO.h"
 #include "board.h"
 #include "main.h"
@@ -68,6 +69,13 @@ typedef struct {
   uint16_t max_driver_input_cmd; /* data[4:5], absolute max driver input */
   uint16_t max_speed_kmh_x100;   /* data[6:7], max speed km/h * 100 */
 } upper_intent_drive_t;
+
+typedef struct {
+  rt_tick_t ts;
+  bool valid;
+  int16_t linear_mps_x1000;   /* data[0:1], linear speed (m/s * 1000) */
+  int16_t yaw_rate_deg_s_x10; /* data[2:3], yaw rate (deg/s * 10) */
+} upper_intent_auto_t;
 
 typedef struct {
   rt_tick_t ts;
@@ -126,6 +134,7 @@ struct {
   rc_intent_t rc;
   upper_intent_t upper_cmd_config;
   upper_intent_drive_t upper_cmd_drive;
+  upper_intent_auto_t upper_cmd_auto;
   motor_cmd_t motor_cmd_left;
   motor_cmd_t motor_cmd_right;
 
@@ -149,6 +158,7 @@ calc_state_t rc_mix_state;
 /* Legacy debug symbols kept for compatibility with existing debug paths. */
 int16_t rpm_a;
 SBUS_CH_DATA sbus_data_raw_a;
+extern float AccGyroValue[6]; /* MPU6050 shared buffer: [3..5] gyro raw */
 
 /* ===================== Helpers ===================== */
 static inline rt_tick_t now_tick(void) {
@@ -213,6 +223,18 @@ static inline int16_t clamp_to_i16(int32_t v) {
   return (int16_t)v;
 }
 
+/* MPU6050 gyro config is set to +-2000dps (GYRO_CONFIG=0x18): 16.4 LSB/(deg/s). */
+static bool read_mpu_gyro_z_deg_s(float* out_deg_s) {
+  float raw;
+  if (!out_deg_s)
+    return false;
+  raw = AccGyroValue[5];
+  if (raw > 32767.0f || raw < -32768.0f)
+    return false;
+  *out_deg_s = raw / 16.4f;
+  return true;
+}
+
 static uint8_t make_timeout_detail_code(bool rc_timeout, bool upper_cfg_timeout, bool upper_drive_timeout,
                                         bool motor_left_timeout, bool motor_right_timeout) {
   uint8_t code = TO_NONE;
@@ -258,6 +280,8 @@ static vcu_fsm_mode_t decide_fsm_mode(bool rc_active, bool rc_remote_automation,
                                       fsm_control_src_t control_src, fsm_stop_reason_t stop_reason) {
   if (control_src == FSM_CTRL_SRC_STOP || stop_reason != FSM_STOP_REASON_NONE)
     return FSM_MODE_SAFE_STOP;
+  if (control_src == FSM_CTRL_SRC_UPPER_AUTO)
+    return FSM_MODE_AUTO_ACTIVE;
   if (control_src == FSM_CTRL_SRC_UPPER)
     return FSM_MODE_AUTO_ACTIVE;
   if (rc_active && rc_remote_automation && !upper_auto_ready)
@@ -297,6 +321,119 @@ static uint8_t pack_fsm_status_mask(vcu_fsm_mode_t mode, fsm_stop_reason_t reaso
     mask |= FSM_ST_STOP_TIMEOUT;
 
   return mask;
+}
+
+/* Upper auto command mixer:
+ * input: linear speed (m/s), yaw-rate (deg/s)
+ * output: left/right driver command in command scale.
+ */
+static void mix_upper_auto_cmd_to_tracks(int16_t linear_mps_x1000, int16_t yaw_rate_deg_s_x10, int16_t* left_out,
+                                         int16_t* right_out) {
+  float v_m_s, yaw_rate_deg_s, omega_rad_s;
+  float half_track_m, wheel_circ_m;
+  float v_left_m_s, v_right_m_s;
+  float rpm_left, rpm_right;
+  float cmd_left, cmd_right;
+  float cmd_left_mapped, cmd_right_mapped;
+  float max_abs, scale;
+  const float driver_input_to_rpm_scale = 0.1f;
+  int32_t cmd_max;
+
+  if (!left_out || !right_out)
+    return;
+
+  v_m_s = (float)linear_mps_x1000 / 1000.0f;
+  yaw_rate_deg_s = (float)yaw_rate_deg_s_x10 / 10.0f;
+  omega_rad_s = yaw_rate_deg_s * (3.1415926f / 180.0f);
+  half_track_m = g_rcm_vehicle.track_width_m * 0.5f;
+  wheel_circ_m = 3.1415926f * g_rcm_vehicle.wheel_diameter_m;
+
+  v_left_m_s = v_m_s - (omega_rad_s * half_track_m);
+  v_right_m_s = v_m_s + (omega_rad_s * half_track_m);
+
+  rpm_left = (v_left_m_s * 60.0f) / wheel_circ_m;
+  rpm_right = (v_right_m_s * 60.0f) / wheel_circ_m;
+
+  /* driver_input ~= rpm / 0.1 */
+  cmd_left = rpm_left / driver_input_to_rpm_scale;
+  cmd_right = rpm_right / driver_input_to_rpm_scale;
+
+  /* Apply geometry sign mapping (same policy as RC mixer output). */
+  cmd_left_mapped = cmd_left * (float)((g_rcm_vehicle.left_dir_sign >= 0) ? 1 : -1);
+  cmd_right_mapped = cmd_right * (float)((g_rcm_vehicle.right_dir_sign >= 0) ? 1 : -1);
+
+  /* Common saturation with ratio preservation. */
+  cmd_max = rcm_max_driver_i32();
+  max_abs = (cmd_left_mapped >= 0.0f) ? cmd_left_mapped : -cmd_left_mapped;
+  {
+    float right_abs = (cmd_right_mapped >= 0.0f) ? cmd_right_mapped : -cmd_right_mapped;
+    if (right_abs > max_abs)
+      max_abs = right_abs;
+  }
+  if (max_abs > (float)cmd_max && max_abs > 0.0f) {
+    scale = (float)cmd_max / max_abs;
+    cmd_left_mapped *= scale;
+    cmd_right_mapped *= scale;
+  }
+
+  *left_out = (int16_t)clamp_i32((int32_t)cmd_left_mapped, -cmd_max, cmd_max);
+  *right_out = (int16_t)clamp_i32((int32_t)cmd_right_mapped, -cmd_max, cmd_max);
+}
+
+/* Optional AUTO mode path:
+ * Convert (linear speed, yaw-rate) to pseudo RC throttle/steering, then reuse RC mixer.
+ */
+static void mix_upper_auto_cmd_via_rc_mixer(int16_t linear_mps_x1000, int16_t yaw_rate_deg_s_x10, int16_t* left_out,
+                                            int16_t* right_out) {
+  rc_input_t auto_as_rc;
+  vehicle_config_t cfg;
+  tune_config_t tune;
+  calc_state_t st;
+  motor_output_t out;
+  float v_m_s, yaw_rate_deg_s, omega_rad_s;
+  float max_speed_m_s, omega_max_rad_s;
+  float throttle_norm, steering_norm;
+
+  if (!left_out || !right_out)
+    return;
+
+  cfg = g_rcm_vehicle;
+  tune = g_rcm_tune;
+  memset(&st, 0, sizeof(st));
+
+  v_m_s = (float)linear_mps_x1000 / 1000.0f;
+  yaw_rate_deg_s = (float)yaw_rate_deg_s_x10 / 10.0f;
+  omega_rad_s = yaw_rate_deg_s * (3.1415926f / 180.0f);
+
+  max_speed_m_s = cfg.max_speed_kmh / 3.6f;
+  if (max_speed_m_s <= 0.001f || cfg.track_width_m <= 0.001f) {
+    *left_out = 0;
+    *right_out = 0;
+    return;
+  }
+
+  /* omega = 2 * vc * beta / track_width => omega_max at vc=max_speed, beta=1 */
+  omega_max_rad_s = (2.0f * max_speed_m_s) / cfg.track_width_m;
+  if (omega_max_rad_s <= 0.001f)
+    omega_max_rad_s = 0.001f;
+
+  throttle_norm = v_m_s / max_speed_m_s;
+  steering_norm = omega_rad_s / omega_max_rad_s;
+  if (throttle_norm > 1.0f)
+    throttle_norm = 1.0f;
+  if (throttle_norm < -1.0f)
+    throttle_norm = -1.0f;
+  if (steering_norm > 1.0f)
+    steering_norm = 1.0f;
+  if (steering_norm < -1.0f)
+    steering_norm = -1.0f;
+
+  auto_as_rc.throttle = throttle_norm * cfg.max_rc_input;
+  auto_as_rc.steering = steering_norm * cfg.max_rc_input;
+  out = mix_rc_to_tracks(&auto_as_rc, false, &cfg, &tune, &st);
+
+  *left_out = out.left_input;
+  *right_out = out.right_input;
 }
 
 static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
@@ -463,6 +600,7 @@ static void update_motion_monitor(vcu_motion_monitor_t* mon, rt_tick_t now_tick_
   mon->right_speed_m_s = right_speed;
   mon->center_speed_m_s = center_speed;
   mon->yaw_rate_deg_s = yaw_rate_deg_s;
+  mon->imu_yaw_rate_valid = read_mpu_gyro_z_deg_s(&mon->imu_yaw_rate_deg_s);
   mon->ts_tick = (uint32_t)now_tick_value;
   mon->valid = true;
 }
@@ -563,6 +701,27 @@ static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* 
   out->max_speed_kmh_x100 = (uint16_t)(((uint16_t)rx->data[6] << 8) | ((uint16_t)rx->data[7]));
   out->throttle_cmd = (int16_t)clamp_i32((int32_t)out->throttle_cmd, -rcm_max_rc_i32(), rcm_max_rc_i32());
   out->steering_cmd = (int16_t)clamp_i32((int32_t)out->steering_cmd, -rcm_max_rc_i32(), rcm_max_rc_i32());
+  out->valid = true;
+
+  return true;
+}
+
+static bool decode_upper_auto_cmd(const can_frame_t* rx, upper_intent_auto_t* out) {
+  if (rx->ext_id != CANID_UPPER_CMD_AUTO_RX)
+    return false;
+  if (rx->dlc < 4u)
+    return false;
+
+  memset(out, 0, sizeof(*out));
+  out->ts = now_tick();
+  out->valid = false;
+
+  /* Upper -> gateway auto payload (0x18FF0220):
+   * data[0:1] : linear_mps_x1000 (int16)
+   * data[2:3] : yaw_rate_deg_s_x10 (int16)
+   */
+  out->linear_mps_x1000 = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
+  out->yaw_rate_deg_s_x10 = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
   out->valid = true;
 
   return true;
@@ -703,7 +862,10 @@ static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t*
   left_pct = (int8_t)clamp_i32((left_cmd * 100) / max_drv, -100, 100);
   right_pct = (int8_t)clamp_i32((right_cmd * 100) / max_drv, -100, 100);
 
-  yaw_rate_x10 = clamp_to_i16((int32_t)(mon->yaw_rate_deg_s * 10.0f));
+  {
+    float mon_yaw_rate = mon->imu_yaw_rate_valid ? mon->imu_yaw_rate_deg_s : mon->yaw_rate_deg_s;
+    yaw_rate_x10 = clamp_to_i16((int32_t)(mon_yaw_rate * 10.0f));
+  }
   center_dist_cm = clamp_to_i16((int32_t)(mon->center_distance_m * 100.0f));
 
   out[0] = (uint8_t)throttle_pct;
@@ -850,6 +1012,7 @@ static void fsm_thread_entry(void* parameter) {
   rc_intent_t rc;
   upper_intent_t upper;
   upper_intent_drive_t upper_drive;
+  upper_intent_auto_t upper_auto;
   motor_status_t motor_left_st;
   motor_status_t motor_right_st;
   vcu_motion_monitor_t motion_monitor;
@@ -862,6 +1025,7 @@ static void fsm_thread_entry(void* parameter) {
     rc = g_latest.rc;
     upper = g_latest.upper_cmd_config;
     upper_drive = g_latest.upper_cmd_drive;
+    upper_auto = g_latest.upper_cmd_auto;
     /* motor driver status */
     motor_left_st = g_latest.motor_left;
     motor_right_st = g_latest.motor_right;
@@ -871,6 +1035,7 @@ static void fsm_thread_entry(void* parameter) {
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
     bool upper_cfg_valid = upper.valid; /* config timeout is not used as a hard validity gate */
     bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
+    bool upper_auto_ok = upper_auto.valid && is_fresh_tick(now, upper_auto.ts, UPPER_DRIVE_TIMEOUT_MS);
 
     /* motor driver status check */
     bool motor_left_ok = motor_left_st.valid && is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS) &&
@@ -880,6 +1045,7 @@ static void fsm_thread_entry(void* parameter) {
 
     bool rc_timeout = (rc.ts != 0) && !rc_ok;
     bool upper_drive_timeout = (upper_drive.ts != 0) && !upper_drive_ok;
+    bool upper_auto_timeout = (upper_auto.ts != 0) && !upper_auto_ok;
     bool motor_left_timeout = (motor_left_st.ts != 0) && !is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS);
     bool motor_right_timeout = (motor_right_st.ts != 0) && !is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS);
 
@@ -973,59 +1139,44 @@ static void fsm_thread_entry(void* parameter) {
     else {
       /* Not STOP:
        * Priority policy:
-       * 1) force_upper -> Upper path (override)
-       * 2) RC active + no auto handover -> RC path
-       * 3) RC active + auto handover ready -> Upper auto path
+       * 1) force_upper -> Upper auto-cmd path (override)
+       * 2) RC active + auto handover ready -> Upper auto-cmd path
+       * 3) RC active + no auto handover -> RC path
        * 4) otherwise -> timeout stop
        */
       if (force_upper || upper_auto_ready) {
         // rt_kprintf("stop_reason :upper_ok \n");
-        out_cmd_left.src = FSM_CTRL_SRC_UPPER;
-        out_cmd_right.src = FSM_CTRL_SRC_UPPER;
+        out_cmd_left.src = FSM_CTRL_SRC_UPPER_AUTO;
+        out_cmd_right.src = FSM_CTRL_SRC_UPPER_AUTO;
 
-        if (!upper_drive_ok) {
+        if (!upper_auto_ok) {
           out_cmd_left.type = CMD_STOP;
           out_cmd_left.rpm_axis1 = 0;
           out_cmd_left.rpm_axis2 = 0;
           out_cmd_right.type = CMD_STOP;
           out_cmd_right.rpm_axis1 = 0;
           out_cmd_right.rpm_axis2 = 0;
-          out_st.stop_reason = FSM_STOP_TIMEOUT; /* upper cmd timeout */
+          out_st.stop_reason = FSM_STOP_TIMEOUT; /* upper auto cmd timeout */
           out_st.timeout_detail_code = TO_UPPER_DRIVE;
         } else {
-          rc_input_t upper_mix_in;
-          vehicle_config_t upper_mix_cfg;
-          tune_config_t upper_mix_tune;
-          calc_state_t upper_mix_state;
-          motor_output_t upper_mix_out;
-
-          upper_mix_in.throttle = (float)upper_drive.throttle_cmd;
-          upper_mix_in.steering = (float)upper_drive.steering_cmd;
-          upper_mix_cfg = g_rcm_vehicle;
-          upper_mix_tune = g_rcm_tune;
-
-          /* Optional runtime limits from upper drive frame (0x18FF0200 data[4:7]). */
-          if (upper_drive.max_driver_input_cmd > 0u) {
-            upper_mix_cfg.max_driver_input = (float)clamp_i32((int32_t)upper_drive.max_driver_input_cmd, 1, 32767);
-          }
-          if (upper_drive.max_speed_kmh_x100 > 0u) {
-            upper_mix_cfg.max_speed_kmh =
-                ((float)clamp_i32((int32_t)upper_drive.max_speed_kmh_x100, 1, 10000)) / 100.0f;
-          }
-
-          memset(&upper_mix_state, 0, sizeof(upper_mix_state));
-          upper_mix_out = mix_rc_to_tracks(&upper_mix_in, false, &upper_mix_cfg, &upper_mix_tune, &upper_mix_state);
+          int16_t left_cmd = 0;
+          int16_t right_cmd = 0;
+#if (UPPER_AUTO_MIX_MODE == UPPER_AUTO_MIX_MODE_RC_MIXER)
+          mix_upper_auto_cmd_via_rc_mixer(upper_auto.linear_mps_x1000, upper_auto.yaw_rate_deg_s_x10, &left_cmd,
+                                          &right_cmd);
+#else
+          mix_upper_auto_cmd_to_tracks(upper_auto.linear_mps_x1000, upper_auto.yaw_rate_deg_s_x10, &left_cmd,
+                                       &right_cmd);
+#endif
 
           out_cmd_left.type = CMD_SETPOINT;
-          out_cmd_left.rpm_axis1 = upper_mix_out.left_input;
-          out_cmd_left.rpm_axis2 = upper_mix_out.left_input;
+          out_cmd_left.rpm_axis1 = left_cmd;
+          out_cmd_left.rpm_axis2 = left_cmd;
           out_cmd_right.type = CMD_SETPOINT;
-          out_cmd_right.rpm_axis1 = upper_mix_out.right_input;
-          out_cmd_right.rpm_axis2 = upper_mix_out.right_input;
-          (void)upper_mix_state;
+          out_cmd_right.rpm_axis1 = right_cmd;
+          out_cmd_right.rpm_axis2 = right_cmd;
         }
-
-        out_st.control_src = FSM_CTRL_SRC_UPPER;
+        out_st.control_src = FSM_CTRL_SRC_UPPER_AUTO;
         if (out_st.stop_reason != FSM_STOP_TIMEOUT)
           out_st.stop_reason = FSM_STOP_REASON_NONE;
       } else if (rc_active) {
@@ -1052,7 +1203,7 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_STOP;
         out_st.control_src = FSM_CTRL_SRC_STOP;
         out_st.stop_reason = FSM_STOP_TIMEOUT;
-        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, false, upper_drive_timeout,
+        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, false, (upper_drive_timeout || upper_auto_timeout),
                                                               motor_left_timeout, motor_right_timeout);
       }
     }
@@ -1138,6 +1289,14 @@ static void can_rx_thread_entry(void* parameter) {
       if (decode_upper_drive_cmd(&rx, &up_drive)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
         g_latest.upper_cmd_drive = up_drive;
+        rt_mutex_release(g_lock);
+        continue;
+      }
+
+      upper_intent_auto_t up_auto;
+      if (decode_upper_auto_cmd(&rx, &up_auto)) {
+        rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+        g_latest.upper_cmd_auto = up_auto;
         rt_mutex_release(g_lock);
         continue;
       }

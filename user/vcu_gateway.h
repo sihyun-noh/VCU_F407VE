@@ -25,6 +25,7 @@ extern "C" {
 
 #define CANID_UPPER_CMD_DRIVE_RX 0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
 #define CANID_UPPER_CMD_RX       0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
+#define CANID_UPPER_CMD_AUTO_RX  0x18FF0220u /* upper->gateway auto cmd ID (linear speed + yaw rate) */
 
 #define CANID_MOTOR_CMD_DRIVER1_TX  0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
 #define CANID_MOTOR_CMD_DRIVER2_TX  0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
@@ -109,12 +110,22 @@ extern "C" {
 #define MOTOR_DRV_DEFAULT_AXIS1_ACC   (0x64u)
 #define MOTOR_DRV_DEFAULT_AXIS2_ACC   (0x64u)
 
+/* ===================== Auto Mix Select ===================== */
+/* Select AUTO_ACTIVE wheel-command generator at compile time.
+ * - UPPER_AUTO_MIX_MODE_KINEMATIC: use mix_upper_auto_cmd_to_tracks(v, yaw_rate)
+ * - UPPER_AUTO_MIX_MODE_RC_MIXER:  convert (v, yaw_rate) -> pseudo(throttle, steering) -> mix_rc_to_tracks
+ */
+#define UPPER_AUTO_MIX_MODE_KINEMATIC (0u)
+#define UPPER_AUTO_MIX_MODE_RC_MIXER  (1u)
+#define UPPER_AUTO_MIX_MODE           UPPER_AUTO_MIX_MODE_KINEMATIC
+
 /* ===================== Public Types ===================== */
 /* Control source selected by FSM arbitration. */
 typedef enum {
   SRC_NONE = 0,
   SRC_RC = 1,
   SRC_UPPER = 2,
+  SRC_UPPER_AUTO = 3, /* upper auto cmd (linear speed + yaw rate) */
 } vcu_control_src_t;
 /* Upper command category (reserved for command-path typing). */
 typedef enum {
@@ -146,10 +157,12 @@ typedef enum {
 typedef struct {
   uint32_t ts_tick; /* update tick */
   bool valid;
+  bool imu_yaw_rate_valid;
   int16_t left_driver_input;
   int16_t right_driver_input;
   float yaw_deg_0_360;
   float yaw_rate_deg_s;
+  float imu_yaw_rate_deg_s;
   float left_speed_m_s;
   float right_speed_m_s;
   float center_speed_m_s;
@@ -170,6 +183,7 @@ typedef vcu_stop_reason_t fsm_stop_reason_t;
 #define FSM_CTRL_SRC_STOP  SRC_NONE
 #define FSM_CTRL_SRC_RC    SRC_RC
 #define FSM_CTRL_SRC_UPPER SRC_UPPER
+#define FSM_CTRL_SRC_UPPER_AUTO SRC_UPPER_AUTO
 
 #define FSM_STOP_REASON_NONE STOP_NONE
 #define FSM_STOP_UPPER_FORCE STOP_UPPER_FORCE
