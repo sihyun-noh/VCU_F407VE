@@ -53,7 +53,9 @@ Apply rule in current code:
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
-- Note: `upper_ok` condition is `upper.valid && within UPPER_TIMEOUT_MS`.
+- Note (current FSM policy):
+  - Config timeout is **not** used as a hard stop gate.
+  - Config validity for apply path is `upper.valid`.
 
 | Byte | Signal | Type | Description |
 |---|---|---|---|
@@ -70,10 +72,10 @@ Motor driver apply rule (current code):
 - `enable_bit` is fixed to default:
   - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
   - (`D0_EN_BOTH_ENABLE(0x03) | D0_AXIS1_SPEED_MODE(0x80) | D0_AXIS2_SPEED_MODE(0x40)`)
-- Accel comes from `0x18FF0210` only when `upper_ok == true`:
+- Accel comes from `0x18FF0210` when `upper.valid == true`:
   - `data[6]` -> left axis1/axis2 accel
   - `data[7]` -> right axis1/axis2 accel
-- If `upper_ok == false`, default accel is used:
+- If `upper.valid == false`, default accel is used:
   - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
   - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
 
@@ -137,7 +139,7 @@ VCU FSM bit set conditions (why each state occurs):
 Timeout detail code (`data[7]`) mapping:
 - `0`: `TO_NONE` (no timeout detail)
 - `1`: `TO_RC` (RC timeout)
-- `2`: `TO_UPPER_CFG` (upper config timeout)
+- `2`: `TO_UPPER_CFG` (reserved; not used as hard timeout in current FSM path)
 - `3`: `TO_UPPER_DRIVE` (upper drive timeout)
 - `4`: `TO_MOTOR_LEFT` (left motor status timeout)
 - `5`: `TO_MOTOR_RIGHT` (right motor status timeout)
@@ -174,9 +176,10 @@ Timeout detail code (`data[7]`) mapping:
   3. Motor fault/timeout
 - If not STOP:
   - `upper_force_active=true` -> Upper command active (force select)
-  - else RC valid + enabled -> RC command active
-  - else if upper config is fresh -> Upper command active
+  - else if `rc_ok && rc_enable && rc_remote_automation && upper.valid && upper.automation` -> Upper auto handover active
+  - else if `rc_ok && rc_enable` -> RC command active (default priority)
   - else -> timeout stop
+- Summary: default control source priority is RC first; Upper is entered only by force or auto handover gate.
 - Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
 - Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
 - RC freshness timeout: `SBUS_TIMEOUT_MS = 1000 ms`
@@ -198,7 +201,7 @@ Driver OK condition (command execution prerequisite):
 - Accel is configurable from upper command `0x18FF0210`:
   - `data[6]`: left accel (`0..255`) -> applied to left axis1/axis2 accel
   - `data[7]`: right accel (`0..255`) -> applied to right axis1/axis2 accel
-- If upper command is not fresh, accel falls back to defaults:
+- If upper config is not valid, accel falls back to defaults:
   - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
   - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
 

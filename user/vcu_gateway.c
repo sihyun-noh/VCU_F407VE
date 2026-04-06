@@ -235,6 +235,16 @@ static uint8_t make_timeout_detail_code(bool rc_timeout, bool upper_cfg_timeout,
   return code;
 }
 
+/* Auto handover gate:
+ * Upper auto control is allowed only when both sides agree.
+ * - RC side: operator enables remote automation while RC link is active.
+ * - Upper side: config automation flag is enabled (valid frame received).
+ */
+static bool is_upper_auto_handover_ready(bool rc_active, bool rc_remote_automation, bool upper_cfg_valid,
+                                         bool upper_automation) {
+  return (rc_active && rc_remote_automation && upper_cfg_valid && upper_automation);
+}
+
 static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
   int16_t value = sbus_to_cmd(sbus_data);
   pack_int16_hi_lo(value, &data[1], &data[0]);
@@ -807,7 +817,7 @@ static void fsm_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
-    bool upper_ok = upper.valid && is_fresh_tick(now, upper.ts, UPPER_TIMEOUT_MS);
+    bool upper_cfg_valid = upper.valid; /* config timeout is not used as a hard validity gate */
     bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
 
     /* motor driver status check */
@@ -817,13 +827,16 @@ static void fsm_thread_entry(void* parameter) {
                           (motor_right_st.fault_bits == 0);
 
     bool rc_timeout = (rc.ts != 0) && !rc_ok;
-    bool upper_cfg_timeout = (upper.ts != 0) && !upper_ok;
     bool upper_drive_timeout = (upper_drive.ts != 0) && !upper_drive_ok;
     bool motor_left_timeout = (motor_left_st.ts != 0) && !is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS);
     bool motor_right_timeout = (motor_right_st.ts != 0) && !is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS);
 
     bool upper_force_stop = upper.upper_force_stop;
     bool rc_emg = rc.rc_emergency_stop;
+    bool rc_active = (rc_ok && rc.rc_enable);
+    bool force_upper = (upper.upper_force_active == 1);
+    bool upper_auto_ready =
+        is_upper_auto_handover_ready(rc_active, rc.rc_remote_automation, upper_cfg_valid, (upper.automation == 1));
 
     /* Left motor driver cmd */
     motor_cmd_t out_cmd_left;
@@ -907,15 +920,13 @@ static void fsm_thread_entry(void* parameter) {
      }*/
     else {
       /* Not STOP:
-       * 1) upper_force_active=1 -> force Upper path even when RC is active
-       * 2) else RC active       -> RC path
-       * 3) else upper_ok        -> Upper path
-       * 4) else                 -> timeout stop
+       * Priority policy:
+       * 1) force_upper -> Upper path (override)
+       * 2) RC active + no auto handover -> RC path
+       * 3) RC active + auto handover ready -> Upper auto path
+       * 4) otherwise -> timeout stop
        */
-      bool rc_active = (rc_ok && rc.rc_enable);
-      bool force_upper = (upper.upper_force_active == 1);
-
-      if (force_upper || (!rc_active && upper_ok)) {
+      if (force_upper || upper_auto_ready) {
         // rt_kprintf("stop_reason :upper_ok \n");
         out_cmd_left.src = FSM_CTRL_SRC_UPPER;
         out_cmd_right.src = FSM_CTRL_SRC_UPPER;
@@ -989,14 +1000,14 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_STOP;
         out_st.control_src = FSM_CTRL_SRC_STOP;
         out_st.stop_reason = FSM_STOP_TIMEOUT;
-        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, upper_cfg_timeout, upper_drive_timeout,
+        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, false, upper_drive_timeout,
                                                               motor_left_timeout, motor_right_timeout);
       }
     }
 
     /*chcek relay on/off of automation flag */
     /*if both automation on to the automation operation*/
-    bool automation_flag = (upper.automation == 1 && rc.rc_remote_automation);
+    bool automation_flag = upper_auto_ready;
     uint8_t bit_mask = 0;
 
     if (automation_flag) {
@@ -1017,10 +1028,10 @@ static void fsm_thread_entry(void* parameter) {
     out_cmd_right.enable_bit = MOTOR_DRV_DEFAULT_ENABLE_BITS;
 
     /* Acceleration can be tuned from upper config payload (0x18FF0210 data[6:7]). */
-    out_cmd_left.axis1_accel_bit = upper_ok ? upper.left_accel_cmd : MOTOR_DRV_DEFAULT_AXIS1_ACC;
-    out_cmd_left.axis2_accel_bit = upper_ok ? upper.left_accel_cmd : MOTOR_DRV_DEFAULT_AXIS2_ACC;
-    out_cmd_right.axis1_accel_bit = upper_ok ? upper.right_accel_cmd : MOTOR_DRV_DEFAULT_AXIS1_ACC;
-    out_cmd_right.axis2_accel_bit = upper_ok ? upper.right_accel_cmd : MOTOR_DRV_DEFAULT_AXIS2_ACC;
+    out_cmd_left.axis1_accel_bit = upper_cfg_valid ? upper.left_accel_cmd : MOTOR_DRV_DEFAULT_AXIS1_ACC;
+    out_cmd_left.axis2_accel_bit = upper_cfg_valid ? upper.left_accel_cmd : MOTOR_DRV_DEFAULT_AXIS2_ACC;
+    out_cmd_right.axis1_accel_bit = upper_cfg_valid ? upper.right_accel_cmd : MOTOR_DRV_DEFAULT_AXIS1_ACC;
+    out_cmd_right.axis2_accel_bit = upper_cfg_valid ? upper.right_accel_cmd : MOTOR_DRV_DEFAULT_AXIS2_ACC;
 
     /* Build feedback payloads for upper (100ms TX in can_thread). */
     upper_status_rpm_t out_rpm_st;

@@ -71,6 +71,23 @@
 - 안정성 보강:
   - stable 모드 경로에서도 `dex_over_dbg`, `dex_applied_dbg`가 항상 초기화되도록 보정
 
+### 0.7 FSM 제어 우선순위/자동전환 게이트 정책 갱신
+- 대상 파일:
+  - `user/vcu_gateway.c`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT.md`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT_KR.md`
+- 변경 내용:
+  - 기본 우선순위를 RC 중심으로 명확화
+    - STOP 조건(upper_force_stop / RC E-stop / motor fault·timeout) 유지
+    - STOP이 아닐 때: RC 우선, Upper는 강제 선택 또는 자동전환 게이트 성립 시 진입
+  - 자동전환(hand-over) 게이트 추가
+    - 조건: `rc_ok && rc_enable && rc_remote_automation && upper.valid && upper.automation`
+    - 조건 성립 시에만 Upper 자동 제어 진입 허용
+  - `upper config timeout`은 hard stop 판정에서 제외
+    - config 적용 유효성은 `upper.valid` 기준
+    - timeout detail 생성 시 `TO_UPPER_CFG`는 현재 hard timeout 경로에서 미사용(예약)
+  - relay automation flag도 동일 게이트(`upper_auto_ready`) 기준으로 동작하도록 정합화
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`

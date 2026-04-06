@@ -55,7 +55,9 @@
 
 ### 4.2 `0x18FF0210` Config/Aux Command
 - Decoder: `decode_upper_cmd()`
-- `upper_ok` 조건: `upper.valid && within UPPER_TIMEOUT_MS`
+- 참고 (현재 FSM 정책):
+  - config timeout은 hard stop 조건으로 사용하지 않음
+  - config 적용 유효성은 `upper.valid` 기준
 
 | Byte | 신호 | 타입 | 설명 |
 |---|---|---|---|
@@ -72,10 +74,10 @@
 - `enable_bit`는 항상 기본값 고정
   - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
 - Upper는 `driver_config_bitmask`로 override 하지 않음
-- accel은 `upper_ok`일 때만 적용
+- accel은 `upper.valid`일 때 적용
   - 좌측: `data[6]` -> left axis1/axis2 accel
   - 우측: `data[7]` -> right axis1/axis2 accel
-- `upper_ok`가 아니면 기본 accel 사용
+- `upper.valid`가 아니면 기본 accel 사용
   - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
   - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
 
@@ -142,7 +144,7 @@ VCU FSM status bitmask (`data[5]`):
 timeout detail code (`data[7]`):
 - `0`: `TO_NONE`
 - `1`: `TO_RC`
-- `2`: `TO_UPPER_CFG`
+- `2`: `TO_UPPER_CFG` (예약값, 현재 FSM hard timeout 경로에서는 미사용)
 - `3`: `TO_UPPER_DRIVE`
 - `4`: `TO_MOTOR_LEFT`
 - `5`: `TO_MOTOR_RIGHT`
@@ -177,8 +179,8 @@ timeout detail code (`data[7]`):
   3. motor fault/timeout
 - STOP이 아니면:
   - `upper_force_active=true`면 Upper 강제 선택
-  - 아니면 RC 유효+enable이면 RC 선택
-- 아니면 upper config 신선도 만족이면 Upper 선택
+  - 아니면 `rc_ok && rc_enable && rc_remote_automation && upper.valid && upper.automation`이면 Upper 자동전환
+  - 아니면 RC 유효+enable이면 RC 선택(기본 우선순위)
   - 아니면 timeout stop
 - 타임아웃 상수:
   - `UPPER_DRIVE_TIMEOUT_MS = 1000`
@@ -192,7 +194,7 @@ FSM 동작 전 신뢰성 확인(핵심):
 
 체크 기준 요약:
 - RC: `rc.valid && fresh(SBUS_TIMEOUT_MS)`
-- Upper config: `upper.valid && fresh(UPPER_TIMEOUT_MS)`
+- Upper config: `upper.valid` (freshness timeout은 hard stop gate로 미사용)
 - Upper drive: `upper_drive.valid && fresh(UPPER_DRIVE_TIMEOUT_MS)`
 - Motor left/right: `valid && fresh(MOTOR_TIMEOUT_MS) && fault_bits==0`
 
