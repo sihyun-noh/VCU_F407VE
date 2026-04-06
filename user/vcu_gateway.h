@@ -1,22 +1,23 @@
 #ifndef _VCU_GATEWAY_H_
 #define _VCU_GATEWAY_H_
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
+
 #include "stm32f4xx_can.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* ===================== SBUS meth ===================== */
+/* ===================== SBUS Mapping ===================== */
 #define SBUS_MIN    272
 #define SBUS_CENTER 992
 #define SBUS_MAX    1712
 
 #define DEADBAND 10
 
-/* ===================== IDs / Periods ===================== */
+/* ===================== CAN IDs / Periods ===================== */
 #define CANID_UPPER_STATUS_RPM_TX     0x18FF0300u /* upper feedback: motor driver status */
 #define CANID_UPPER_STATUS_TX         0x18FF0310u /* upper feedback: vcu gateway status */
 #define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF0320u /* upper feedback: vehicle motion status */
@@ -33,12 +34,13 @@ extern "C" {
 #define CAN_TX_PERIOD_MS 100u /* motor cmd + upper status, 100ms */
 #define FSM_PERIOD_MS    10u  /* arbitration tick */
 
-/* Timeouts (tune if needed) */
+/* ===================== Timeouts ===================== */
 #define UPPER_TIMEOUT_MS       500u
 #define UPPER_DRIVE_TIMEOUT_MS 1000u
 #define MOTOR_TIMEOUT_MS       500u
 #define SBUS_TIMEOUT_MS        1000u
 
+/* ===================== Status Bit Fields ===================== */
 /* Timeout detail code for 0x18FF0310 data[7] */
 #define TO_NONE        (0u)
 #define TO_RC          (1u)
@@ -68,14 +70,15 @@ extern "C" {
 #define VCU_ST_STOP_TIMEOUT     (1u << 6) /* stop reason: timeout */
 #define VCU_ST_RUNNING          (1u << 7) /* setpoint control running */
 
-/*Data bit masks */
+/* ===================== Motor Driver Bit Masks ===================== */
+/* Data bit masks */
 #define D0_ENABLE_MASK      (0x03u)   /*bit1:0*/
 #define D0_RESET_EN         (1u << 2) /*bit2*/
 #define D0_SLIDE_EN         (1u << 3) /*bit3*/
 #define D0_AXIS2_SPEED_MODE (1u << 6) /*bit6: 1=speed, 0=torque*/
 #define D0_AXIS1_SPEED_MODE (1u << 7) /*bit7: 1=speed, 0=torque*/
 
-/* Enable bits value (bit0:1)*/
+/* Enable bits value (bit0:1) */
 #define D0_EN_BOTH_DISABLE (0x00u) /*00*/
 #define D0_EN_AXIS2_ONLY   (0x01u) /*01*/
 #define D0_EN_AXIS1_ONLY   (0x02u) /*10*/
@@ -86,7 +89,7 @@ extern "C" {
 #define MOTOR_DRV_DEFAULT_AXIS1_ACC   (0x64u)
 #define MOTOR_DRV_DEFAULT_AXIS2_ACC   (0x64u)
 
-/* ===================== Types ===================== */
+/* ===================== Public Types ===================== */
 /* Control source selected by FSM arbitration. */
 typedef enum {
   SRC_NONE = 0,
@@ -113,6 +116,22 @@ typedef enum {
   STOP_TIMEOUT = 4,
 } vcu_stop_reason_t;
 
+typedef struct {
+  uint32_t ts_tick; /* update tick */
+  bool valid;
+  int16_t left_driver_input;
+  int16_t right_driver_input;
+  float yaw_deg_0_360;
+  float yaw_rate_deg_s;
+  float left_speed_m_s;
+  float right_speed_m_s;
+  float center_speed_m_s;
+  float left_distance_m;
+  float right_distance_m;
+  float center_distance_m;
+} vcu_motion_monitor_t;
+
+/* ===================== Compatibility Aliases ===================== */
 /* Compatibility typedefs: keep existing code style/names. */
 typedef vcu_control_src_t cmd_src_t;
 typedef vcu_upper_cmd_t cmd_upper_t;
@@ -131,21 +150,7 @@ typedef vcu_stop_reason_t fsm_stop_reason_t;
 #define FSM_STOP_MOTOR_FAULT STOP_MOTOR_FAULT
 #define FSM_STOP_TIMEOUT     STOP_TIMEOUT
 
-typedef struct {
-  uint32_t ts_tick; /* update tick */
-  bool valid;
-  int16_t left_driver_input;
-  int16_t right_driver_input;
-  float yaw_deg_0_360;
-  float yaw_rate_deg_s;
-  float left_speed_m_s;
-  float right_speed_m_s;
-  float center_speed_m_s;
-  float left_distance_m;
-  float right_distance_m;
-  float center_distance_m;
-} vcu_motion_monitor_t;
-
+/* ===================== Public APIs ===================== */
 /**
  * @brief  Initialize the VCU Gateway module.
  * @note   This can be registered with RT-Thread INIT_APP_EXPORT as well.

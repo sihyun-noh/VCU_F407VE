@@ -1,32 +1,34 @@
-
-
 /*
- * vcu_gateway_rtthread.c
- * RT-Thread 3.0 + MDK-ARM 5.06 skeleton
+ * vcu_gateway.c
+ * RT-Thread VCU gateway module.
  *
  * Threads:
- *  - sbus_thread: SBUS -> rc_intent update
- *  - fsm_thread : arbitration -> motor_cmd + upper_status update
- *  - can_thread : CAN RX parse + CAN TX periodic(100ms)
+ *  - sbus_thread: SBUS decode/filter/mix -> rc_intent update
+ *  - fsm_thread : source arbitration -> motor_cmd + upper_status update
+ *  - can_rx_thread: CAN RX parse -> latest caches
+ *  - can_tx_thread: periodic CAN TX (100 ms)
  *
- * CAN:
- *  - Motor status RX: 0x18FF2100
- *  - Upper status TX: 0x18FF0100 (temporary)
- *  - Upper cmd RX ID / Motor cmd TX ID: TODO set
+ * Key CAN IDs (current):
+ *  - Upper -> Gateway CMD:   0x18FF0200, 0x18FF0210
+ *  - Gateway -> Upper ST:    0x18FF0300, 0x18FF0310, 0x18FF0320, 0x18FF0330
+ *  - Motor status RX:        0x18FF0021 (left), 0x18FF0020 (right)
+ *  - Motor command TX:       0x18FF2100 (left), 0x18FF2000 (right)
  */
 
-#include <rtthread.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
+#include <rtthread.h>
 
-#include "vcu_gateway.h"
-#include "SBUS_AGMO.h"
 #include "CAN_AGMO.h"
-#include "rc_mixer.h"
+#include "SBUS_AGMO.h"
 #include "board.h"
 #include "main.h"
+#include "rc_mixer.h"
+#include "vcu_gateway.h"
 
+/* ===================== Internal Types ===================== */
+/* RC intent snapshot (produced by sbus_thread, consumed by fsm_thread). */
 typedef struct {
   rt_tick_t ts; /* rt_tick */
   bool valid;
@@ -117,7 +119,8 @@ typedef struct {
   uint8_t data[8];
 } can_frame_t;
 
-/* ===================== Shared "latest mails" ===================== */
+/* ===================== Shared State ===================== */
+/* Latest mailbox snapshots shared across threads (protected by g_lock). */
 struct {
   rc_intent_t rc;
   upper_intent_t upper_cmd_config;
@@ -138,6 +141,14 @@ static rt_mutex_t g_lock = RT_NULL;
 static rt_mq_t g_can_rx_mq = RT_NULL;
 #define CAN_RX_MQ_DEPTH 32
 
+/* ===================== Module Scope State ===================== */
+/* Mixer debug state snapshot from SBUS path (for diagnostics/monitoring). */
+calc_state_t rc_mix_state;
+
+/* Legacy debug symbols kept for compatibility with existing debug paths. */
+int16_t rpm_a;
+SBUS_CH_DATA sbus_data_raw_a;
+
 /* ===================== Helpers ===================== */
 static inline rt_tick_t now_tick(void) {
   return rt_tick_get();
@@ -150,9 +161,6 @@ static inline bool is_fresh_tick(rt_tick_t now, rt_tick_t ts, uint32_t timeout_m
   uint32_t dt_ms = (uint32_t)(dt * 1000 / RT_TICK_PER_SECOND);
   return dt_ms < timeout_ms;
 }
-
-int16_t rpm_a;
-SBUS_CH_DATA sbus_data_raw_a;
 
 static inline int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi) {
   if (v < lo)
@@ -664,7 +672,6 @@ static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t*
 
 /* 1) SBUS thread: update rc_intent */
 
-calc_state_t rc_mix_state;
 static void sbus_thread_entry(void* parameter) {
   (void)parameter;
   uint8_t cmd[8] = { 0 };
@@ -772,7 +779,6 @@ static void sbus_thread_entry(void* parameter) {
     // vcu_diff_drive_mix(rc.axis3, rc.axis1, &rc.left_rpm_value, &rc.right_rpm_value);
 
     rc_input_t rc_mix_in;
-    // calc_state_t rc_mix_state;
     motor_output_t rc_mix_out;
     memset(&rc_mix_state, 0, sizeof(rc_mix_state));
     rc_mix_in.throttle = (float)rc.axis3;
