@@ -299,7 +299,7 @@ static void MPU6050_thread_entry(float *parameter)
 		rt_kprintf("AccGyroValue[4] = %.3f\n",parameter[4]);
 		rt_kprintf("AccGyroValue[5] = %.3f\n",parameter[5]);
 		//putchar(10);
-		rt_thread_delay(2000);
+		rt_thread_delay(100);
 	}
 }
 

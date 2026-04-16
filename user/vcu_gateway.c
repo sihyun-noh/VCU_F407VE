@@ -158,7 +158,7 @@ calc_state_t rc_mix_state;
 /* Legacy debug symbols kept for compatibility with existing debug paths. */
 int16_t rpm_a;
 SBUS_CH_DATA sbus_data_raw_a;
-extern float AccGyroValue[6]; /* MPU6050 shared buffer: [3..5] gyro raw */
+static float AccGyroValue[6]; /* MPU6050 shared buffer: [3..5] gyro raw */
 
 /* ===================== Helpers ===================== */
 static inline rt_tick_t now_tick(void) {
@@ -228,7 +228,8 @@ static bool read_mpu_gyro_z_deg_s(float* out_deg_s) {
   float raw;
   if (!out_deg_s)
     return false;
-  raw = AccGyroValue[5];
+	MPU6050_ReadData(AccGyroValue);
+  raw = AccGyroValue[1];
   if (raw > 32767.0f || raw < -32768.0f)
     return false;
   *out_deg_s = raw / 16.4f;

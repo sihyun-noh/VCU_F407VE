@@ -22,8 +22,8 @@
 #define RCM_MAX_STEERING_AT_HIGH_SPEED    (250.0f) /* +: 고속에서도 조향 허용 증가, -: 고속 안정성 우선 */
 #define RCM_INPLACE_TURN_SCALE_PERCENT    (50.0f)  /* throttle==0일 때 steering 비율(100/75/50/30/0) */
 #define RCM_TURN_SHARPNESS                (0.25f)  /* +: 선회 시 outer 감쇠 증가, -: outer 유지 */
-#define RCM_MIN_INNER_RATIO               (0.4f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
-#define RCM_MIN_OUTER_RATIO               (0.6f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
+#define RCM_MIN_INNER_RATIO               (0.3f)  /* +: inner 최소 속도 증가(0 방지), -: inner 더 줄어듦 */
+#define RCM_MIN_OUTER_RATIO               (0.7f)  /* +: outer 감쇠 하한 증가, -: outer 더 줄어듦 */
 
 /* [FEATURE] Mixer optional features */
 #define RCM_MIXER_FEAT_GAMMA  (1u << 0) /* bit0: steering gamma shaping ON/OFF */
@@ -38,7 +38,7 @@
 /* [TUNE-GAMMA] Steering gamma shaping */
 #define RCM_GAMMA_MIN     (0.5f) /* 최소값: 작을수록(1.0 미만) 센터 구간 조향이 더 민감 */
 #define RCM_GAMMA_MAX     (3.0f) /* 최대값: 클수록(1.0 초과) 센터 구간 조향이 더 둔감 */
-#define RCM_GAMMA_DEFAULT (1.0f) /* 적용 범위 0.5~3.0, 1.0=선형(기존 동일), <1 민감, >1 둔감 */
+#define RCM_GAMMA_DEFAULT (2.0f) /* 적용 범위 0.5~3.0, 1.0=선형(기존 동일), <1 민감, >1 둔감 */
 /* 현재 gamma는 steering(beta) 경로에만 적용됨.
  * (참고) throttle에도 동일 개념 적용 시 예:
  *  - throttle_gamma < 1.0f : 저속 구간 응답 민감(초반 가속 빠름)
@@ -49,7 +49,7 @@
 
 /* [TUNE-DEX] Agile mixer extension (optional) */
 #define RCM_DEX_ENABLE        (1u)    /* 0: base only, 1: base + dex shaping */
-#define RCM_DEX_INNER_MIN     (-0.4f) /* when |steering|>|throttle|, inner can go down to this value */
+#define RCM_DEX_INNER_MIN     (-0.8f) /* when |steering|>|throttle|, inner can go down to this value */
 #define RCM_DEX_OUTER_MAX     (1.3f)  /* when |steering|>|throttle|, outer can rise up to this value */
 #define RCM_DEX_BLEND_GAIN    (1.0f)  /* dex blend sensitivity */
 

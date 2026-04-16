@@ -64,7 +64,7 @@ void rt_hw_board_init()
 	
 	//初始化姿态传感器
 	Init_MPU6050();
-	Init_MPU6050();
+	//Init_MPU6050();
 	
 	//初始化温湿度传感器
 	InitTH();
