@@ -9,8 +9,9 @@
 #define RCM_WHEELBASE_M      (1.5f)   /* 현재 믹서 계산에는 직접 미사용(향후 모델 확장용) */
 #define RCM_WHEEL_DIAMETER_M (0.36f)  /* +: 같은 rpm에서 속도/거리 추정 증가, -: 감소 바퀴지름 0.36m */
 #define RCM_MAX_RC_INPUT     (500.0f) /* RC 입력 정규화 기준. 실제 송신기 스케일과 일치 필요 */
-#define RCM_MAX_DRIVER_INPUT (664.0f) /* +: 최대 출력/선회 여유 증가, -: 전체 출력 제한 강화 */
-#define RCM_MAX_SPEED_KMH    (5.0f)   /* throttle=500 기준 속도 모델. +: yaw_rate 추정 증가, -: 감소 */
+//#define RCM_MAX_DRIVER_INPUT (664.0f) /* +: 최대 출력/선회 여유 증가, -: 전체 출력 제한 강화 */
+#define RCM_MAX_DRIVER_INPUT (396.0f) /* +: 최대 출력/선회 여유 증가, -: 전체 출력 제한 강화 */
+#define RCM_MAX_SPEED_KMH    (3.0f)   /* throttle=500 기준 속도 모델. +: yaw_rate 추정 증가, -: 감소 */
 
 /* [TUNE] Default tuning values */
 #define RCM_DEADBAND_THROTTLE             (10.0f)  /* +: 미세 스로틀 무시 증가(둔감), -: 미세 조작 민감 */
