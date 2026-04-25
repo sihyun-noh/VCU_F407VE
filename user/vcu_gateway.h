@@ -31,9 +31,27 @@ extern "C" {
 #define CANID_MOTOR_CMD_DRIVER2_TX  0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
 #define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
 #define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0020u /* motor driver status right RX */
+#define CANID_WEED_ACTUATOR_TX      0x18EFC800u /* weed actuator control TX */
 
 #define CAN_TX_PERIOD_MS 100u /* motor cmd + upper status, 100ms */
 #define FSM_PERIOD_MS    10u  /* arbitration tick */
+#define WEED_ACTUATOR_TX_PERIOD_MS 250u /* periodic actuator command TX */
+
+/* RC left toggle(CH5) exact raw positions (3-position switch). */
+#define WEED_CH5_RAW_DOWN 272u  /* weed down */
+#define WEED_CH5_RAW_MID  992u  /* weed mid */
+#define WEED_CH5_RAW_UP   1712u /* weed up (home) */
+
+/* CH5 mapped actuator target in mm (meaning-oriented naming). */
+#define WEED_POS_DOWN_MM 180u
+#define WEED_POS_MID_MM  90u
+#define WEED_POS_UP_MM   0u
+
+/* actuator position scaling:
+ * docs sample: 10mm->0x0064, 200mm->0x07D0 => pos = mm * 10
+ */
+#define WEED_ACT_POS_MAX_MM    200u
+#define WEED_ACT_POS_SCALE_X10 10u
 
 /* ===================== Timeouts ===================== */
 #define UPPER_TIMEOUT_MS       500u

@@ -39,6 +39,7 @@ typedef struct {
   bool rc_drive_mode;        /* RC C button: drive flag */
   bool cultivator_down;
   bool cultivator_on;
+  uint16_t weed_target_mm; /* RC left toggle mapped target: 0/90/180 mm */
   int16_t axis1;           /* rc Right stick up/down */
   int16_t axis2;           /* rc Right stick left/right */
   int16_t axis3;           /* rc Left stick up/down */
@@ -154,6 +155,8 @@ static rt_mq_t g_can_rx_mq = RT_NULL;
 /* ===================== Module Scope State ===================== */
 /* Mixer debug state snapshot from SBUS path (for diagnostics/monitoring). */
 calc_state_t rc_mix_state;
+static bool g_weed_actuator_pre_sent = false;
+static rt_tick_t g_weed_actuator_last_tx_tick = 0;
 
 /* Legacy debug symbols kept for compatibility with existing debug paths. */
 int16_t rpm_a;
@@ -221,6 +224,24 @@ static inline int16_t clamp_to_i16(int32_t v) {
   if (v < -32768)
     return -32768;
   return (int16_t)v;
+}
+
+static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
+  uint32_t d_down;
+  uint32_t d_mid;
+  uint32_t d_up;
+
+  d_down = (ch5_raw >= WEED_CH5_RAW_DOWN) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_DOWN)
+                                          : (uint32_t)(WEED_CH5_RAW_DOWN - ch5_raw);
+  d_mid = (ch5_raw >= WEED_CH5_RAW_MID) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_MID)
+                                        : (uint32_t)(WEED_CH5_RAW_MID - ch5_raw);
+  d_up = (ch5_raw >= WEED_CH5_RAW_UP) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_UP) : (uint32_t)(WEED_CH5_RAW_UP - ch5_raw);
+
+  if (d_down <= d_mid && d_down <= d_up)
+    return WEED_POS_DOWN_MM;
+  if (d_mid <= d_down && d_mid <= d_up)
+    return WEED_POS_MID_MM;
+  return WEED_POS_UP_MM;
 }
 
 /* MPU6050 gyro config is set to +-2000dps (GYRO_CONFIG=0x18): 16.4 LSB/(deg/s). */
@@ -877,6 +898,56 @@ static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t*
   pack_int16_hi_lo(center_dist_cm, &out[6], &out[7]);
 }
 
+/* Weed actuator pre-command (1-shot before position control start).
+ * Requested payload spec: 03 FB 00 00 00 00 00.
+ * TX uses DLC=8, so the last byte is padded with 00.
+ */
+static void pack_weed_actuator_pre_cmd(uint8_t out[8]) {
+  memset(out, 0, 8);
+  out[0] = 0x03;
+  out[1] = 0xFB;
+}
+
+/* Weed actuator position command (250ms periodic):
+ * out cmd: 01 FB FB FB FB FB FF FF
+ * in  cmd: 02 FB FB FB FB FB FF FF
+ *
+ * Position payload is encoded from target_mm as pos = mm * 10 (u16, little-endian),
+ * and placed at data[2:3]. Remaining placeholder bytes keep current template values.
+ */
+static void pack_weed_actuator_pos_cmd(uint16_t target_mm, uint8_t out[8]) {
+  uint16_t pos_raw;
+  if (target_mm > WEED_ACT_POS_MAX_MM)
+    target_mm = WEED_ACT_POS_MAX_MM;
+  pos_raw = (uint16_t)(target_mm * WEED_ACT_POS_SCALE_X10);
+
+  memset(out, 0, 8);
+  out[0] = (target_mm == 0u) ? 0x02u : 0x01u; /* in/out */
+  out[1] = 0xFBu;
+  out[2] = (uint8_t)(pos_raw & 0xFFu);        /* little-endian LSB */
+  out[3] = (uint8_t)((pos_raw >> 8) & 0xFFu); /* little-endian MSB */
+  out[4] = 0xFBu;
+  out[5] = 0xFBu;
+  out[6] = 0xFFu;
+  out[7] = 0xFFu;
+}
+
+static bool weed_period_elapsed(rt_tick_t now, rt_tick_t* last_tick, uint32_t period_ms) {
+  uint32_t dt_ms;
+  if (!last_tick)
+    return false;
+  if (*last_tick == 0) {
+    *last_tick = now;
+    return true;
+  }
+  dt_ms = (uint32_t)((now - *last_tick) * 1000u / RT_TICK_PER_SECOND);
+  if (dt_ms >= period_ms) {
+    *last_tick = now;
+    return true;
+  }
+  return false;
+}
+
 /* ===================== Threads ===================== */
 
 /* 1) SBUS thread: update rc_intent */
@@ -954,7 +1025,8 @@ static void sbus_thread_entry(void* parameter) {
     }
 
     /* TODO: map channels properly */
-    rc.cultivator_down = (ch.CH5 > 1000);
+    rc.weed_target_mm = map_ch5_to_weed_target_mm(ch.CH5);
+    rc.cultivator_down = (rc.weed_target_mm > 0u);
     rc.cultivator_on = (ch.CH6 > 1000);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
@@ -1335,6 +1407,7 @@ static void can_tx_thread_entry(void* parameter) {
     upper_status_rpm_t st_rpm;
     vcu_motion_monitor_t mon;
     rc_intent_t rc;
+    rt_tick_t now_tick_tx;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     cmd_left = g_latest.motor_cmd_left;
@@ -1346,8 +1419,37 @@ static void can_tx_thread_entry(void* parameter) {
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
+    bool actuator_requested;
+    bool run_allowed;
+    bool weed_tx_due;
+    uint16_t weed_target_mm;
+
+    now_tick_tx = now_tick();
 
     // rt_kprintf("send CAN msg !\n");
+    actuator_requested = (rc.valid && rc.rc_enable);
+    run_allowed = (st.control_src != FSM_CTRL_SRC_STOP) && (st.stop_reason == FSM_STOP_REASON_NONE);
+    weed_target_mm = rc.weed_target_mm;
+    weed_tx_due = weed_period_elapsed(now_tick_tx, &g_weed_actuator_last_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS);
+
+    /* P2-002/P2-003/P2-004:
+     * - P2-002: send pre-command once on control start
+     * - P2-003: send position command every 250ms
+     * - P2-004: target comes from RC CH5 3-position mapping (0/90/180mm)
+     * Reset one-shot flag when request is dropped or system enters STOP.
+     */
+    if (!actuator_requested || !run_allowed) {
+      g_weed_actuator_pre_sent = false;
+      g_weed_actuator_last_tx_tick = 0;
+    } else if (!g_weed_actuator_pre_sent) {
+      pack_weed_actuator_pre_cmd(d1);
+      if (can_hw_send_ext(CANID_WEED_ACTUATOR_TX, d1, 8))
+        g_weed_actuator_pre_sent = true;
+    } else if (weed_tx_due) {
+      pack_weed_actuator_pos_cmd(weed_target_mm, d1);
+      (void)can_hw_send_ext(CANID_WEED_ACTUATOR_TX, d1, 8);
+    }
+
     /* Driver 1 real operation(run signal)*/
     pack_motor_cmd(&cmd_left, d0);
     (void)can_hw_send_ext(CANID_MOTOR_CMD_DRIVER1_TX, d0, 8);
