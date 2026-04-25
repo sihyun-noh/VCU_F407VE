@@ -132,6 +132,31 @@
     - `vcu_motion_monitor_t`에 `imu_yaw_rate_deg_s`, `imu_yaw_rate_valid` 추가
     - `0x18FF0330 data[4:5]`는 IMU gyro Z 기반 yaw rate 우선, 미유효 시 명령 기반 fallback
 
+### 1.0 Weed actuator RX/Status 연동 + FSM/TX 역할 분리 (2026-04-26)
+- 대상 파일:
+  - `user/vcu_gateway.h`
+  - `user/vcu_gateway.c`
+  - `hardware/CAN.c`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT.md`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT_KR.md`
+  - `UPPER_VCU_STATUS_GUIDE.md`
+  - `VCU_GATEWAY_REFERENCE.md`
+  - `TEST_SHEET_VCU_GATEWAY.md`
+- 변경 내용:
+  - 신규 weed actuator RX ID 추가:
+    - `0x18FF00C8` (`CYL -> VCU`)
+    - 필드 파싱: position/current/status flags/error/speed/input
+  - 신규 upper weed status TX ID 추가:
+    - `0x18FF0340` (`Gateway -> Upper`)
+    - status/error/current/input/meta/target/actual/speed 보고
+  - actuator pre-command 재무장 정책 보강:
+    - 실제 position이 target 근접(`WEED_ACTUATOR_POS_TOL_MM`) 시 `pre_sent` 재무장
+  - 구조 개선:
+    - weed 판단은 `weed_fsm_step()`에서 수행
+    - `can_tx_thread`는 pending frame 송신 전용으로 정리
+  - CAN1 필터 반영:
+    - `hardware/CAN.c` filter #4를 `0x18FF00C8` 수신용으로 설정
+
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`

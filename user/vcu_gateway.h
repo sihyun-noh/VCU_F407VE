@@ -22,19 +22,21 @@ extern "C" {
 #define CANID_UPPER_STATUS_TX         0x18FF0310u /* upper feedback: vcu gateway status */
 #define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF0320u /* upper feedback: vehicle motion status */
 #define CANID_UPPER_VEHICLE_MON_TX    0x18FF0330u /* upper feedback: vehicle monitor/debug status */
+#define CANID_UPPER_WEED_STATUS_TX    0x18FF0340u /* upper feedback: weed actuator status */
 
 #define CANID_UPPER_CMD_DRIVE_RX 0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
 #define CANID_UPPER_CMD_RX       0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
 #define CANID_UPPER_CMD_AUTO_RX  0x18FF0220u /* upper->gateway auto cmd ID (linear speed + yaw rate) */
 
-#define CANID_MOTOR_CMD_DRIVER1_TX  0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
-#define CANID_MOTOR_CMD_DRIVER2_TX  0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
-#define CANID_MOTOR_STATUS_LEFT_RX  0x18FF0021u /* motor driver status left RX */
-#define CANID_MOTOR_STATUS_RIGHT_RX 0x18FF0020u /* motor driver status right RX */
-#define CANID_WEED_ACTUATOR_TX      0x18EFC800u /* weed actuator control TX */
+#define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
+#define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
+#define CANID_MOTOR_STATUS_LEFT_RX    0x18FF0021u /* motor driver status left RX */
+#define CANID_MOTOR_STATUS_RIGHT_RX   0x18FF0020u /* motor driver status right RX */
+#define CANID_WEED_ACTUATOR_TX        0x18EFC800u /* weed actuator control TX */
+#define CANID_WEED_ACTUATOR_STATUS_RX 0x18FF00C8u /* weed actuator feedback RX (CYL->VCU) */
 
-#define CAN_TX_PERIOD_MS 100u /* motor cmd + upper status, 100ms */
-#define FSM_PERIOD_MS    10u  /* arbitration tick */
+#define CAN_TX_PERIOD_MS           100u /* motor cmd + upper status, 100ms */
+#define FSM_PERIOD_MS              10u  /* arbitration tick */
 #define WEED_ACTUATOR_TX_PERIOD_MS 250u /* periodic actuator command TX */
 
 /* RC left toggle(CH5) exact raw positions (3-position switch). */
@@ -54,10 +56,12 @@ extern "C" {
 #define WEED_ACT_POS_SCALE_X10 10u
 
 /* ===================== Timeouts ===================== */
-#define UPPER_TIMEOUT_MS       500u
-#define UPPER_DRIVE_TIMEOUT_MS 1000u
-#define MOTOR_TIMEOUT_MS       500u
-#define SBUS_TIMEOUT_MS        1000u
+#define UPPER_TIMEOUT_MS         500u
+#define UPPER_DRIVE_TIMEOUT_MS   1000u
+#define MOTOR_TIMEOUT_MS         500u
+#define SBUS_TIMEOUT_MS          1000u
+#define WEED_ACTUATOR_TIMEOUT_MS 500u
+#define WEED_ACTUATOR_POS_TOL_MM 3u
 
 /* ===================== Status Bit Fields ===================== */
 /* Timeout detail code for 0x18FF0310 data[7] */
@@ -198,9 +202,9 @@ typedef vcu_control_src_t fsm_control_src_t;
 typedef vcu_stop_reason_t fsm_stop_reason_t;
 
 /* Compatibility macros: old FSM enum labels mapped to unified values. */
-#define FSM_CTRL_SRC_STOP  SRC_NONE
-#define FSM_CTRL_SRC_RC    SRC_RC
-#define FSM_CTRL_SRC_UPPER SRC_UPPER
+#define FSM_CTRL_SRC_STOP       SRC_NONE
+#define FSM_CTRL_SRC_RC         SRC_RC
+#define FSM_CTRL_SRC_UPPER      SRC_UPPER
 #define FSM_CTRL_SRC_UPPER_AUTO SRC_UPPER_AUTO
 
 #define FSM_STOP_REASON_NONE STOP_NONE

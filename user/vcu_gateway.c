@@ -9,8 +9,10 @@
  *  - can_tx_thread: periodic CAN TX (100 ms)
  *
  * Key CAN IDs (current):
- *  - Upper -> Gateway CMD:   0x18FF0200, 0x18FF0210
- *  - Gateway -> Upper ST:    0x18FF0300, 0x18FF0310, 0x18FF0320, 0x18FF0330
+ *  - Upper -> Gateway CMD:   0x18FF0200, 0x18FF0210, 0x18FF0220
+ *  - Gateway -> Upper ST:    0x18FF0300, 0x18FF0310, 0x18FF0320, 0x18FF0330, 0x18FF0340
+ *  - Weed actuator RX:       0x18FF00C8
+ *  - Weed actuator TX:       0x18EFC800
  *  - Motor status RX:        0x18FF0021 (left), 0x18FF0020 (right)
  *  - Motor command TX:       0x18FF2100 (left), 0x18FF2000 (right)
  */
@@ -90,6 +92,36 @@ typedef struct {
 
 typedef struct {
   rt_tick_t ts;
+  bool valid;
+  uint16_t position_x10_mm; /* byte0-1, little-endian, 0.1mm */
+  uint8_t current_raw;      /* byte2, 0.25A/bit */
+  uint8_t status_flags;     /* byte3 */
+  uint8_t error_code;       /* byte4 */
+  uint16_t speed_x10_mm_s;  /* byte5-6, little-endian, 0.1mm/s */
+  uint8_t input_state;      /* byte7 */
+} weed_actuator_status_t;
+
+typedef struct {
+  bool pre_pending;
+  bool pos_pending;
+  uint8_t pre_frame[8];
+  uint8_t pos_frame[8];
+  uint8_t pre_dlc;
+  uint8_t pos_dlc;
+  uint16_t target_mm;
+  bool pre_sent;
+  bool rx_timeout;
+} weed_tx_plan_t;
+
+typedef struct {
+  bool pre_sent;
+  bool target_latched;
+  uint16_t target_active_mm;
+  rt_tick_t last_pos_tx_tick;
+} weed_fsm_ctx_t;
+
+typedef struct {
+  rt_tick_t ts;
   cmd_src_t src;
   cmd_type_t type;
   uint8_t enable_bit;
@@ -141,6 +173,8 @@ struct {
 
   motor_status_t motor_left;
   motor_status_t motor_right;
+  weed_actuator_status_t weed_actuator;
+  weed_tx_plan_t weed_tx_plan;
   upper_status_t upper_vcu_st;
   upper_status_rpm_t upper_rpm_st;
   vcu_motion_monitor_t motion_monitor;
@@ -155,8 +189,7 @@ static rt_mq_t g_can_rx_mq = RT_NULL;
 /* ===================== Module Scope State ===================== */
 /* Mixer debug state snapshot from SBUS path (for diagnostics/monitoring). */
 calc_state_t rc_mix_state;
-static bool g_weed_actuator_pre_sent = false;
-static rt_tick_t g_weed_actuator_last_tx_tick = 0;
+static weed_fsm_ctx_t g_weed_fsm_ctx;
 
 /* Legacy debug symbols kept for compatibility with existing debug paths. */
 int16_t rpm_a;
@@ -226,6 +259,10 @@ static inline int16_t clamp_to_i16(int32_t v) {
   return (int16_t)v;
 }
 
+static inline uint8_t clamp_u16_to_u8(uint16_t v) {
+  return (uint8_t)((v > 255u) ? 255u : v);
+}
+
 static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
   uint32_t d_down;
   uint32_t d_mid;
@@ -233,8 +270,8 @@ static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
 
   d_down = (ch5_raw >= WEED_CH5_RAW_DOWN) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_DOWN)
                                           : (uint32_t)(WEED_CH5_RAW_DOWN - ch5_raw);
-  d_mid = (ch5_raw >= WEED_CH5_RAW_MID) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_MID)
-                                        : (uint32_t)(WEED_CH5_RAW_MID - ch5_raw);
+  d_mid =
+      (ch5_raw >= WEED_CH5_RAW_MID) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_MID) : (uint32_t)(WEED_CH5_RAW_MID - ch5_raw);
   d_up = (ch5_raw >= WEED_CH5_RAW_UP) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_UP) : (uint32_t)(WEED_CH5_RAW_UP - ch5_raw);
 
   if (d_down <= d_mid && d_down <= d_up)
@@ -249,7 +286,7 @@ static bool read_mpu_gyro_z_deg_s(float* out_deg_s) {
   float raw;
   if (!out_deg_s)
     return false;
-	MPU6050_ReadData(AccGyroValue);
+  MPU6050_ReadData(AccGyroValue);
   raw = AccGyroValue[1];
   if (raw > 32767.0f || raw < -32768.0f)
     return false;
@@ -316,21 +353,11 @@ static vcu_fsm_mode_t decide_fsm_mode(bool rc_active, bool rc_remote_automation,
 static uint8_t pack_fsm_status_mask(vcu_fsm_mode_t mode, fsm_stop_reason_t reason) {
   uint8_t mask = 0;
   switch (mode) {
-    case FSM_MODE_SAFE_STOP:
-      mask |= FSM_ST_MODE_SAFE_STOP;
-      break;
-    case FSM_MODE_MANUAL_RC:
-      mask |= FSM_ST_MODE_MANUAL_RC;
-      break;
-    case FSM_MODE_AUTO_ARMED:
-      mask |= FSM_ST_MODE_AUTO_ARMED;
-      break;
-    case FSM_MODE_AUTO_ACTIVE:
-      mask |= FSM_ST_MODE_AUTO_ACTIVE;
-      break;
-    default:
-      mask |= FSM_ST_MODE_SAFE_STOP;
-      break;
+  case FSM_MODE_SAFE_STOP: mask |= FSM_ST_MODE_SAFE_STOP; break;
+  case FSM_MODE_MANUAL_RC: mask |= FSM_ST_MODE_MANUAL_RC; break;
+  case FSM_MODE_AUTO_ARMED: mask |= FSM_ST_MODE_AUTO_ARMED; break;
+  case FSM_MODE_AUTO_ACTIVE: mask |= FSM_ST_MODE_AUTO_ACTIVE; break;
+  default: mask |= FSM_ST_MODE_SAFE_STOP; break;
   }
 
   if (reason == FSM_STOP_UPPER_FORCE)
@@ -749,6 +776,32 @@ static bool decode_upper_auto_cmd(const can_frame_t* rx, upper_intent_auto_t* ou
   return true;
 }
 
+/* Weed actuator status RX: 0x18FF00C8 (CYL -> VCU)
+ * byte0-1: position (0.1mm), little-endian
+ * byte2  : current raw (0.25A/bit)
+ * byte3  : status flags
+ * byte4  : error code
+ * byte5-6: speed (0.1mm/s), little-endian
+ * byte7  : input state
+ */
+static bool decode_weed_actuator_status(const can_frame_t* rx, weed_actuator_status_t* out) {
+  if (rx->ext_id != CANID_WEED_ACTUATOR_STATUS_RX)
+    return false;
+  if (rx->dlc < 8u)
+    return false;
+
+  memset(out, 0, sizeof(*out));
+  out->ts = now_tick();
+  out->valid = true;
+  out->position_x10_mm = (uint16_t)(((uint16_t)rx->data[1] << 8) | ((uint16_t)rx->data[0]));
+  out->current_raw = rx->data[2];
+  out->status_flags = rx->data[3];
+  out->error_code = rx->data[4];
+  out->speed_x10_mm_s = (uint16_t)(((uint16_t)rx->data[6] << 8) | ((uint16_t)rx->data[5]));
+  out->input_state = rx->data[7];
+  return true;
+}
+
 /* Motor status RX: 0x18FF0021 (adjust to your motor status layout) */
 static bool decode_motor_status(const can_frame_t* rx, uint32_t expect_id, motor_status_t* out) {
   if (rx->ext_id != expect_id)
@@ -898,6 +951,46 @@ static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t*
   pack_int16_hi_lo(center_dist_cm, &out[6], &out[7]);
 }
 
+/* Upper weed status TX 0x18FF0340
+ * data[0] : status_flags
+ * data[1] : error_code
+ * data[2] : current_raw
+ * data[3] : input_state
+ * data[4] : meta bits (bit0 valid, bit1 timeout, bit2 pre_sent)
+ * data[5] : target_mm (0..255)
+ * data[6] : actual_pos_mm (0..255)
+ * data[7] : speed_mm_s (0..255)
+ */
+static void pack_upper_weed_status(const weed_actuator_status_t* ws, uint16_t target_mm, bool pre_sent, bool timeout,
+                                   uint8_t out[8]) {
+  uint8_t meta = 0;
+  uint16_t pos_mm = 0;
+  uint16_t speed_mm_s = 0;
+
+  memset(out, 0, 8);
+  if (!ws)
+    return;
+
+  pos_mm = ws->position_x10_mm / 10u;
+  speed_mm_s = ws->speed_x10_mm_s / 10u;
+
+  if (ws->valid)
+    meta |= (1u << 0);
+  if (timeout)
+    meta |= (1u << 1);
+  if (pre_sent)
+    meta |= (1u << 2);
+
+  out[0] = ws->status_flags;
+  out[1] = ws->error_code;
+  out[2] = ws->current_raw;
+  out[3] = ws->input_state;
+  out[4] = meta;
+  out[5] = clamp_u16_to_u8(target_mm);
+  out[6] = clamp_u16_to_u8(pos_mm);
+  out[7] = clamp_u16_to_u8(speed_mm_s);
+}
+
 /* Weed actuator pre-command (1-shot before position control start).
  * Requested payload spec: 03 FB 00 00 00 00 00.
  * TX uses DLC=8, so the last byte is padded with 00.
@@ -909,11 +1002,9 @@ static void pack_weed_actuator_pre_cmd(uint8_t out[8]) {
 }
 
 /* Weed actuator position command (250ms periodic):
- * out cmd: 01 FB FB FB FB FB FF FF
- * in  cmd: 02 FB FB FB FB FB FF FF
- *
- * Position payload is encoded from target_mm as pos = mm * 10 (u16, little-endian),
- * and placed at data[2:3]. Remaining placeholder bytes keep current template values.
+ * - position value goes to data[0:1] (u16, little-endian)
+ * - data[2:3] are fixed 0xFB, 0xFB
+ * - special command bytes (0x01/0x02) are not used here
  */
 static void pack_weed_actuator_pos_cmd(uint16_t target_mm, uint8_t out[8]) {
   uint16_t pos_raw;
@@ -922,10 +1013,10 @@ static void pack_weed_actuator_pos_cmd(uint16_t target_mm, uint8_t out[8]) {
   pos_raw = (uint16_t)(target_mm * WEED_ACT_POS_SCALE_X10);
 
   memset(out, 0, 8);
-  out[0] = (target_mm == 0u) ? 0x02u : 0x01u; /* in/out */
-  out[1] = 0xFBu;
-  out[2] = (uint8_t)(pos_raw & 0xFFu);        /* little-endian LSB */
-  out[3] = (uint8_t)((pos_raw >> 8) & 0xFFu); /* little-endian MSB */
+  out[0] = (uint8_t)(pos_raw & 0xFFu);        /* little-endian LSB */
+  out[1] = (uint8_t)((pos_raw >> 8) & 0xFFu); /* little-endian MSB */
+  out[2] = 0xFBu;
+  out[3] = 0xFBu;
   out[4] = 0xFBu;
   out[5] = 0xFBu;
   out[6] = 0xFFu;
@@ -946,6 +1037,85 @@ static bool weed_period_elapsed(rt_tick_t now, rt_tick_t* last_tick, uint32_t pe
     return true;
   }
   return false;
+}
+
+/* Weed FSM:
+ * - Evaluate actuator run conditions and target transitions
+ * - Arm pre-command on each new target cycle
+ * - Generate periodic position-command pending events
+ * - Keep TX thread as send-only path (consume pending frames)
+ */
+static void weed_fsm_step(rt_tick_t now, const rc_intent_t* rc, const upper_status_t* st,
+                          const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
+  bool actuator_requested;
+  bool run_allowed;
+  bool weed_rx_fresh;
+  bool weed_pos_reached = false;
+  bool pos_due;
+  uint16_t weed_target_mm;
+  uint16_t weed_pos_mm = 0;
+
+  if (!rc || !st || !ws || !plan)
+    return;
+
+  actuator_requested = (rc->valid && rc->rc_enable);
+  run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
+  weed_target_mm = rc->weed_target_mm;
+  weed_rx_fresh = ws->valid && is_fresh_tick(now, ws->ts, WEED_ACTUATOR_TIMEOUT_MS);
+  plan->target_mm = weed_target_mm;
+  plan->pre_sent = g_weed_fsm_ctx.pre_sent;
+  plan->rx_timeout = !weed_rx_fresh;
+
+  if (weed_rx_fresh) {
+    uint16_t diff_mm;
+    weed_pos_mm = (uint16_t)(ws->position_x10_mm / 10u);
+    diff_mm = (weed_pos_mm >= weed_target_mm) ? (weed_pos_mm - weed_target_mm) : (weed_target_mm - weed_pos_mm);
+    weed_pos_reached = (diff_mm <= WEED_ACTUATOR_POS_TOL_MM);
+  }
+
+  if (!actuator_requested || !run_allowed) {
+    g_weed_fsm_ctx.pre_sent = false;
+    g_weed_fsm_ctx.target_latched = false;
+    g_weed_fsm_ctx.last_pos_tx_tick = 0;
+    plan->pre_pending = false;
+    plan->pos_pending = false;
+    plan->pre_sent = false;
+    return;
+  }
+
+  if (!g_weed_fsm_ctx.target_latched) {
+    g_weed_fsm_ctx.target_active_mm = weed_target_mm;
+    g_weed_fsm_ctx.target_latched = true;
+    g_weed_fsm_ctx.pre_sent = false;
+  } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
+    g_weed_fsm_ctx.target_active_mm = weed_target_mm;
+    g_weed_fsm_ctx.pre_sent = false;
+  }
+
+  if (weed_pos_reached) {
+    /* Re-arm for next command cycle when actual position reaches current target. */
+    g_weed_fsm_ctx.pre_sent = false;
+  }
+
+  // Requested payload spec: 03 FB 00 00 00 00 00
+  if (!g_weed_fsm_ctx.pre_sent && !weed_pos_reached) {
+    if (!plan->pre_pending) {
+      pack_weed_actuator_pre_cmd(plan->pre_frame);
+      plan->pre_dlc = 8u;
+      plan->pre_pending = true;
+    }
+    g_weed_fsm_ctx.pre_sent = true;
+  }
+
+  pos_due = weed_period_elapsed(now, &g_weed_fsm_ctx.last_pos_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS);
+  if (pos_due && !plan->pos_pending) {
+    pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
+    plan->pos_dlc = 8u;
+    plan->pos_pending = true;
+  }
+
+  plan->pre_sent = g_weed_fsm_ctx.pre_sent;
+  plan->rx_timeout = !weed_rx_fresh;
 }
 
 /* ===================== Threads ===================== */
@@ -1088,6 +1258,8 @@ static void fsm_thread_entry(void* parameter) {
   upper_intent_auto_t upper_auto;
   motor_status_t motor_left_st;
   motor_status_t motor_right_st;
+  weed_actuator_status_t weed_st;
+  weed_tx_plan_t weed_plan;
   vcu_motion_monitor_t motion_monitor;
 
   for (;;) {
@@ -1102,6 +1274,8 @@ static void fsm_thread_entry(void* parameter) {
     /* motor driver status */
     motor_left_st = g_latest.motor_left;
     motor_right_st = g_latest.motor_right;
+    weed_st = g_latest.weed_actuator;
+    weed_plan = g_latest.weed_tx_plan;
     motion_monitor = g_latest.motion_monitor;
     rt_mutex_release(g_lock);
 
@@ -1276,8 +1450,8 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_STOP;
         out_st.control_src = FSM_CTRL_SRC_STOP;
         out_st.stop_reason = FSM_STOP_TIMEOUT;
-        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, false, (upper_drive_timeout || upper_auto_timeout),
-                                                              motor_left_timeout, motor_right_timeout);
+        out_st.timeout_detail_code = make_timeout_detail_code(
+            rc_timeout, false, (upper_drive_timeout || upper_auto_timeout), motor_left_timeout, motor_right_timeout);
       }
     }
 
@@ -1332,12 +1506,18 @@ static void fsm_thread_entry(void* parameter) {
      */
     update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, (int16_t)(-out_cmd_right.rpm_axis1));
 
+    /* Weed FSM step: decide pre/periodic actuator commands and status meta. */
+    weed_fsm_step(now, &rc, &out_st, &weed_st, &weed_plan);
+
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     g_latest.motor_cmd_left = out_cmd_left;
     g_latest.motor_cmd_right = out_cmd_right;
     g_latest.upper_rpm_st = out_rpm_st;
     g_latest.upper_vcu_st = out_st;
+    weed_plan.pre_pending = (g_latest.weed_tx_plan.pre_pending || weed_plan.pre_pending);
+    weed_plan.pos_pending = (g_latest.weed_tx_plan.pos_pending || weed_plan.pos_pending);
+    g_latest.weed_tx_plan = weed_plan;
     g_latest.motion_monitor = motion_monitor;
     rt_mutex_release(g_lock);
   }
@@ -1370,6 +1550,14 @@ static void can_rx_thread_entry(void* parameter) {
       if (decode_upper_auto_cmd(&rx, &up_auto)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
         g_latest.upper_cmd_auto = up_auto;
+        rt_mutex_release(g_lock);
+        continue;
+      }
+
+      weed_actuator_status_t ws;
+      if (decode_weed_actuator_status(&rx, &ws)) {
+        rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+        g_latest.weed_actuator = ws;
         rt_mutex_release(g_lock);
         continue;
       }
@@ -1407,7 +1595,8 @@ static void can_tx_thread_entry(void* parameter) {
     upper_status_rpm_t st_rpm;
     vcu_motion_monitor_t mon;
     rc_intent_t rc;
-    rt_tick_t now_tick_tx;
+    weed_actuator_status_t weed_st;
+    weed_tx_plan_t weed_plan;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     cmd_left = g_latest.motor_cmd_left;
@@ -1416,38 +1605,28 @@ static void can_tx_thread_entry(void* parameter) {
     st_rpm = g_latest.upper_rpm_st;
     mon = g_latest.motion_monitor;
     rc = g_latest.rc;
+    weed_st = g_latest.weed_actuator;
+    weed_plan = g_latest.weed_tx_plan;
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
-    bool actuator_requested;
-    bool run_allowed;
-    bool weed_tx_due;
-    uint16_t weed_target_mm;
+    bool sent_pre = false;
+    bool sent_pos = false;
 
-    now_tick_tx = now_tick();
-
-    // rt_kprintf("send CAN msg !\n");
-    actuator_requested = (rc.valid && rc.rc_enable);
-    run_allowed = (st.control_src != FSM_CTRL_SRC_STOP) && (st.stop_reason == FSM_STOP_REASON_NONE);
-    weed_target_mm = rc.weed_target_mm;
-    weed_tx_due = weed_period_elapsed(now_tick_tx, &g_weed_actuator_last_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS);
-
-    /* P2-002/P2-003/P2-004:
-     * - P2-002: send pre-command once on control start
-     * - P2-003: send position command every 250ms
-     * - P2-004: target comes from RC CH5 3-position mapping (0/90/180mm)
-     * Reset one-shot flag when request is dropped or system enters STOP.
-     */
-    if (!actuator_requested || !run_allowed) {
-      g_weed_actuator_pre_sent = false;
-      g_weed_actuator_last_tx_tick = 0;
-    } else if (!g_weed_actuator_pre_sent) {
-      pack_weed_actuator_pre_cmd(d1);
-      if (can_hw_send_ext(CANID_WEED_ACTUATOR_TX, d1, 8))
-        g_weed_actuator_pre_sent = true;
-    } else if (weed_tx_due) {
-      pack_weed_actuator_pos_cmd(weed_target_mm, d1);
-      (void)can_hw_send_ext(CANID_WEED_ACTUATOR_TX, d1, 8);
+    /* TX role only: send pending weed frames generated by weed_fsm_step(). */
+    if (weed_plan.pre_pending) {
+      sent_pre = can_hw_send_ext(CANID_WEED_ACTUATOR_TX, weed_plan.pre_frame, weed_plan.pre_dlc);
+    }
+    if (weed_plan.pos_pending) {
+      sent_pos = can_hw_send_ext(CANID_WEED_ACTUATOR_TX, weed_plan.pos_frame, weed_plan.pos_dlc);
+    }
+    if (sent_pre || sent_pos) {
+      rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+      if (sent_pre)
+        g_latest.weed_tx_plan.pre_pending = false;
+      if (sent_pos)
+        g_latest.weed_tx_plan.pos_pending = false;
+      rt_mutex_release(g_lock);
     }
 
     /* Driver 1 real operation(run signal)*/
@@ -1472,6 +1651,10 @@ static void can_tx_thread_entry(void* parameter) {
     /* send vehicle monitor/debug status to upper */
     pack_upper_vehicle_monitor(&rc, &cmd_left, &cmd_right, &mon, d1);
     (void)can_hw_send_ext(CANID_UPPER_VEHICLE_MON_TX, d1, 8);
+
+    /* send weed actuator status to upper */
+    pack_upper_weed_status(&weed_st, weed_plan.target_mm, weed_plan.pre_sent, weed_plan.rx_timeout, d1);
+    (void)can_hw_send_ext(CANID_UPPER_WEED_STATUS_TX, d1, 8);
   }
 }
 

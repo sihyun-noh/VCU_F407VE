@@ -16,6 +16,7 @@
   - `0`: 정지/무제어(`SRC_NONE`)
   - `1`: RC 제어(`SRC_RC`)
   - `2`: Upper 제어(`SRC_UPPER`)
+  - `3`: Upper AUTO 제어(`SRC_UPPER_AUTO`)
 
 ### `stop_reason`
 - 정지 원인 코드
@@ -126,5 +127,7 @@
 - `0x18FF0330`: 테스트/디버그 모니터
   - `data[4:5]`는 IMU gyro Z 기반 yaw rate(deg/s*10)를 우선 사용
   - IMU 값이 유효하지 않으면 명령 기반 yaw rate로 fallback
+- `0x18FF0340`: weed actuator 상태(status/error/current/target/actual/speed)
+- `0x18FF00C8`: weed actuator 피드백 RX(position/status/error/speed/input)
 - `0x18FF0200`: Upper drive cmd (`throttle/steering + runtime max`)
 - `0x18FF0210`: Upper config (`automation + relay + accel`)

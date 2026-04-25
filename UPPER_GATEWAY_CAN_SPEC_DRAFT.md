@@ -24,10 +24,13 @@ Normalization scale (unified):
 |---|---:|---:|---|
 | Upper -> Gateway | `0x18FF0200` | Event | Drive command (throttle/steering) |
 | Upper -> Gateway | `0x18FF0210` | Event | Config/aux command |
+| Upper -> Gateway | `0x18FF0220` | Event | Auto command (linear speed/yaw rate) |
 | Gateway -> Upper | `0x18FF0300` | 100 ms | Motor driver RPM feedback |
 | Gateway -> Upper | `0x18FF0310` | 100 ms | Gateway/RC/FSM status |
 | Gateway -> Upper | `0x18FF0320` | 100 ms | Vehicle motion status |
 | Gateway -> Upper | `0x18FF0330` | 100 ms | Vehicle monitor/debug |
+| Gateway -> Upper | `0x18FF0340` | 100 ms | Weed actuator status |
+| Weed actuator -> Gateway | `0x18FF00C8` | 100 ms | Weed actuator feedback |
 
 ## 4. Upper -> Gateway (CMD RX)
 
@@ -170,6 +173,34 @@ Timeout detail code (`data[7]`) mapping:
 | 4:5 | `yaw_rate_deg_s_x10` | `int16` | IMU gyro Z deg/s * 10 (fallback: command-based yaw rate) |
 | 6:7 | `center_distance_m_x100` | `int16` | m * 100 (cm) |
 
+### 5.5 `0x18FF0340` Weed Actuator Status
+- Packer: `pack_upper_weed_status()`
+- Purpose: forward weed actuator runtime state/error/position to upper
+
+| Byte | Signal | Type | Description |
+|---|---|---|---|
+| 0 | `status_flags` | `uint8` | actuator status bit flags (from `0x18FF00C8 data[3]`) |
+| 1 | `error_code` | `uint8` | actuator error code (`0x18FF00C8 data[4]`) |
+| 2 | `current_raw` | `uint8` | current raw (`0.25A/bit`) |
+| 3 | `input_state` | `uint8` | actuator input state |
+| 4 | `meta_bits` | `uint8` | bit0 valid, bit1 timeout, bit2 pre_sent |
+| 5 | `target_mm` | `uint8` | target position in mm (clamped 0..255) |
+| 6 | `actual_pos_mm` | `uint8` | actual position in mm (clamped 0..255) |
+| 7 | `speed_mm_s` | `uint8` | speed in mm/s (clamped 0..255) |
+
+### 5.6 `0x18FF00C8` Weed Actuator Feedback RX
+- Decoder: `decode_weed_actuator_status()`
+- Byte order: little-endian for position/speed fields (device-native)
+
+| Byte | Signal | Type | Description |
+|---|---|---|---|
+| 0:1 | `position_x10_mm` | `uint16 (LE)` | position in 0.1 mm |
+| 2 | `current_raw` | `uint8` | current raw (`0.25A/bit`) |
+| 3 | `status_flags` | `uint8` | status bit flags |
+| 4 | `error_code` | `uint8` | actuator error code |
+| 5:6 | `speed_x10_mm_s` | `uint16 (LE)` | speed in 0.1 mm/s |
+| 7 | `input_state` | `uint8` | input state |
+
 ## 6. Control Arbitration (Current Code Behavior)
 - STOP priority:
   1. `upper_force_stop`
@@ -181,6 +212,7 @@ Timeout detail code (`data[7]`) mapping:
   - else if `rc_ok && rc_enable` -> RC command active (default priority)
   - else -> timeout stop
 - Summary: default control source priority is RC first; Upper is entered only by force or auto handover gate.
+- Weed actuator decision is evaluated in FSM (`weed_fsm_step()`), while `can_tx_thread` only transmits pre-built pending weed frames.
 - Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
 - Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
 - RC freshness timeout: `SBUS_TIMEOUT_MS = 1000 ms`

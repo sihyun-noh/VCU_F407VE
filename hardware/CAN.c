@@ -212,21 +212,18 @@ void Init_CAN1_Filter_AGMO(void) {
   CAN_FilterInit(&CAN_FilterInitStructure);
   
 	
-	// example 16bit
-  CAN_FilterInitStructure.CAN_FilterNumber = 4; 
-                                               
-  CAN_FilterInitStructure.CAN_FilterIdHigh =
-      ((0x601 << 3) | CAN_ID_EXT | CAN_RTR_Data) & 0xffff; 
-  CAN_FilterInitStructure.CAN_FilterIdLow =
-      ((0x602 << 3) | CAN_ID_EXT | CAN_RTR_Data) & 0xffff; 
-  CAN_FilterInitStructure.CAN_FilterMaskIdHigh =
-      ((0x603 << 3) | CAN_ID_EXT | CAN_RTR_Data) & 0xffff; 
-  CAN_FilterInitStructure.CAN_FilterMaskIdLow =
-      ((0x604 << 3) | CAN_ID_EXT | CAN_RTR_Data) & 0xffff;             
-  CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdList;      
-  CAN_FilterInitStructure.CAN_FilterScale = CAN_FilterScale_16bit;    
-  CAN_FilterInitStructure.CAN_FilterFIFOAssignment = CAN_Filter_FIFO0; 
-  CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;              
+	// weed actuator status RX (CYL -> VCU)
+	uint32_t id_5 = (0x18ff00c8 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+
+  CAN_FilterInitStructure.CAN_FilterNumber = 4;
+  CAN_FilterInitStructure.CAN_FilterIdHigh = (id_5 >> 16) & 0xffff;
+  CAN_FilterInitStructure.CAN_FilterIdLow = (id_5)&0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdHigh = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdLow = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdMask;
+  CAN_FilterInitStructure.CAN_FilterScale = CAN_FilterScale_32bit;
+  CAN_FilterInitStructure.CAN_FilterFIFOAssignment = CAN_Filter_FIFO0;
+  CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;
   CAN_FilterInit(&CAN_FilterInitStructure);
   
   CAN_ITConfig(CAN1, CAN_IT_FMP0, ENABLE); 

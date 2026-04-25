@@ -27,6 +27,7 @@
     - valid/freshness/fault 기반 신뢰성 확인
     - STOP 우선순위 적용
     - RC 제어 / Upper 제어 경로 선택
+    - weed FSM(`weed_fsm_step`)에서 actuator pre/periodic 판단 및 pending frame 생성
     - 모터 cmd, 상위 보고 status, timeout detail 계산
   - 출력:
     - `g_latest.motor_cmd_left/right`
@@ -39,16 +40,19 @@
   - 처리:
     - `0x18FF0200` drive 명령 파싱
     - `0x18FF0210` config 명령 파싱
+    - `0x18FF00C8` weed actuator feedback 파싱
     - `0x18FF0021/0020` 모터 상태 파싱
   - 출력: `g_latest.upper_*`, `g_latest.motor_*` 갱신
 
 - `can_tx_thread` (CAN 송신 스레드, 주기 100ms)
-  - 역할: FSM에서 결정된 최신 상태/명령을 CAN으로 주기 송신
+  - 역할: FSM에서 결정된 최신 상태/명령을 CAN으로 주기 송신 (판단 로직 없음, 송신 전담)
   - 입력: `g_latest.motor_cmd_*`, `g_latest.upper_*`, `g_latest.motion_monitor`, `g_latest.rc`
   - 송신:
     - 모터 명령(`0x18FF2100`, `0x18FF2000`)
     - 상위 상태(`0x18FF0310`, `0x18FF0300`)
     - 차량 모니터링(`0x18FF0320`, `0x18FF0330`)
+    - weed actuator 상태(`0x18FF0340`)
+    - weed actuator 제어(`0x18EFC800`, pending frame만 전송)
 
 ## 2-1) 모듈 책임 경계 (권장 구조)
 
@@ -112,6 +116,7 @@
   - `data[7]` `right_accel_cmd`
 - `0x18FF0021` left motor status
 - `0x18FF0020` right motor status
+- `0x18FF00C8` weed actuator feedback
 
 ### TX
 - `0x18FF2100` Gateway -> Driver1(left) cmd
@@ -120,6 +125,8 @@
 - `0x18FF0310` gateway status (`upper_vcu_st`)
 - `0x18FF0320` vehicle motion status
 - `0x18FF0330` vehicle monitor/debug status
+- `0x18FF0340` weed actuator status
+- `0x18EFC800` weed actuator command
 
 ## 5) FSM 제어 우선순위
 - STOP 우선순위:
@@ -259,37 +266,33 @@
 - bit6 `RC_ST_REMOTE_AUTOMATION` (D 버튼)
 
 ## 10) VCU FSM 비트 (`0x18FF0310 data[5]`)
-- bit0 `VCU_ST_SRC_NONE`
-- bit1 `VCU_ST_SRC_RC`
-- bit2 `VCU_ST_SRC_UPPER`
-- bit3 `VCU_ST_STOP_UPPER`
-- bit4 `VCU_ST_STOP_RC_EMG`
-- bit5 `VCU_ST_STOP_MOTOR_FAULT`
-- bit6 `VCU_ST_STOP_TIMEOUT`
-- bit7 `VCU_ST_RUNNING`
+- bit0 `FSM_ST_MODE_SAFE_STOP`
+- bit1 `FSM_ST_MODE_MANUAL_RC`
+- bit2 `FSM_ST_MODE_AUTO_ARMED`
+- bit3 `FSM_ST_MODE_AUTO_ACTIVE`
+- bit4 `FSM_ST_STOP_UPPER_FORCE`
+- bit5 `FSM_ST_STOP_RC_EMG`
+- bit6 `FSM_ST_STOP_MOTOR_FAULT`
+- bit7 `FSM_ST_STOP_TIMEOUT`
 
 비트 set 조건(VCU Gateway 상태 기준):
-- `bit0 VCU_ST_SRC_NONE`
-  - 제어 소스가 STOP 상태일 때 set
-  - 예: STOP 우선조건 진입, 또는 유효한 제어 소스 미선택
-- `bit1 VCU_ST_SRC_RC`
-  - RC 경로가 선택되었을 때 set
-  - 조건 예: `rc.valid && freshness && rc_enable` 만족, 상위 STOP 조건 없음
-- `bit2 VCU_ST_SRC_UPPER`
-  - Upper 경로가 선택되었을 때 set
-  - 조건 예: `upper_force_active=1` 또는 RC 비활성 상태에서 upper 입력 신뢰성 만족
-- `bit3 VCU_ST_STOP_UPPER`
-  - `upper_force_stop=1`로 정지된 경우 set
-- `bit4 VCU_ST_STOP_RC_EMG`
-  - RC 비상정지(`rc_emergency_stop=1`)로 정지된 경우 set
-- `bit5 VCU_ST_STOP_MOTOR_FAULT`
-  - 모터 상태는 수신되지만 `fault_bits != 0`으로 fault 정지한 경우 set
-- `bit6 VCU_ST_STOP_TIMEOUT`
+- `bit0 FSM_ST_MODE_SAFE_STOP`
+  - STOP 경로이거나 stop reason 존재 시 set
+- `bit1 FSM_ST_MODE_MANUAL_RC`
+  - RC 경로가 선택된 정상 주행 구간에서 set
+- `bit2 FSM_ST_MODE_AUTO_ARMED`
+  - RC remote automation 요청은 있으나 upper auto handover 미성립 시 set
+- `bit3 FSM_ST_MODE_AUTO_ACTIVE`
+  - Upper AUTO 제어 경로 활성 시 set
+- `bit4 FSM_ST_STOP_UPPER_FORCE`
+  - `upper_force_stop=1` 정지 시 set
+- `bit5 FSM_ST_STOP_RC_EMG`
+  - RC 비상정지(`rc_emergency_stop=1`) 시 set
+- `bit6 FSM_ST_STOP_MOTOR_FAULT`
+  - 모터 fault로 정지 시 set
+- `bit7 FSM_ST_STOP_TIMEOUT`
   - freshness timeout 계열 정지 시 set
-  - 원인 상세는 `data[7] timeout_detail_code`로 구분 (`TO_RC`, `TO_UPPER_*`, `TO_MOTOR_*` 등)
-- `bit7 VCU_ST_RUNNING`
-  - 최종 명령 타입이 `CMD_SETPOINT`일 때 set
-  - `CMD_STOP` 상태에서는 clear
+  - 원인 상세는 `data[7] timeout_detail_code`(`TO_RC`, `TO_UPPER_*`, `TO_MOTOR_*`)로 구분
 
 ## 11) 모니터링 계산 기준
 - `0x18FF0320`, `0x18FF0330`은 현재 명령값(out_cmd) 기반 적분값

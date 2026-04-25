@@ -2,7 +2,7 @@
 
 ## 1. 목적
 - VCU Gateway의 현재 구현 로직(RC/Upper/FSM/CAN TX-RX/Timeout/Fault)을 실차 또는 HIL 환경에서 검증한다.
-- 판정 기준은 CAN 송신 프레임(`0x18FF0300`, `0x18FF0310`, `0x18FF0320`, `0x18FF0330`)과 FSM 비트/timeout detail 일치 여부로 한다.
+- 판정 기준은 CAN 송신 프레임(`0x18FF0300`, `0x18FF0310`, `0x18FF0320`, `0x18FF0330`, `0x18FF0340`)과 FSM 비트/timeout detail 일치 여부로 한다.
 
 ## 2. 테스트 환경
 - CAN bitrate: `500 kbps`
@@ -12,7 +12,8 @@
   - `can_tx_thread`: 100ms
 - 주요 ID:
   - Upper->Gateway: `0x18FF0200`, `0x18FF0210`, `0x18FF0220`
-  - Gateway->Upper: `0x18FF0300`, `0x18FF0310`, `0x18FF0320`, `0x18FF0330`
+  - Actuator->Gateway: `0x18FF00C8`
+  - Gateway->Upper: `0x18FF0300`, `0x18FF0310`, `0x18FF0320`, `0x18FF0330`, `0x18FF0340`
 
 ## 3. 스케일/인코딩 기준
 - 입력 정규화: `±RCM_MAX_RC_INPUT = ±500`
@@ -56,6 +57,9 @@
 | TC-020 | 0310 timeout detail 복합 | 복수 timeout 유도 | RC+Upper 동시 끊김 등 | `data[7]=TO_MULTIPLE(6)` | ☐ |
 | TC-021 | MPU yaw 반영(0330) | MPU thread 동작 + gyro z 유효 | steering 입력/회전 후 `0330` 확인 | `0330:data[4:5]`가 IMU yaw rate(deg/s x10) 우선 반영 | ☐ |
 | TC-022 | MPU fallback 검증 | MPU 미동작/무효 | 동일 조건에서 `0330` 확인 | `0330:data[4:5]`가 명령기반 yaw rate fallback 반영 | ☐ |
+| TC-023 | Actuator RX 파싱(00C8) | `00C8` 주기 수신 | position/status/error/speed 값을 변경 전송 | 내부 status가 `0340`으로 반영됨 | ☐ |
+| TC-024 | 위치도달 기반 pre 재무장 | target 변경 + 실제 position 도달 | target 전환 2회 반복 | 도달 이후 다음 target에서 pre 명령이 선행 송신됨 | ☐ |
+| TC-025 | Actuator RX timeout 보고 | `00C8` 중단(`WEED_ACTUATOR_TIMEOUT_MS` 초과) | actuator 피드백 중단 | `0340:data[4]` timeout bit set | ☐ |
 
 ## 6. bitmask 빠른 체크표
 

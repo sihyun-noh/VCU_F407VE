@@ -24,10 +24,13 @@
 |---|---:|---:|---|
 | Upper -> Gateway | `0x18FF0200` | Event | 주행 명령(throttle/steering + 런타임 제한값) |
 | Upper -> Gateway | `0x18FF0210` | Event | 설정/보조 명령 |
+| Upper -> Gateway | `0x18FF0220` | Event | 자동주행 명령(linear speed/yaw rate) |
 | Gateway -> Upper | `0x18FF0300` | 100 ms | 모터 드라이버 RPM 피드백 |
 | Gateway -> Upper | `0x18FF0310` | 100 ms | Gateway/RC/FSM 상태 |
 | Gateway -> Upper | `0x18FF0320` | 100 ms | 차량 운동 상태 |
 | Gateway -> Upper | `0x18FF0330` | 100 ms | 차량 모니터/디버그 |
+| Gateway -> Upper | `0x18FF0340` | 100 ms | weed actuator 상태 |
+| Weed actuator -> Gateway | `0x18FF00C8` | 100 ms | weed actuator 피드백 |
 
 ## 4. Upper -> Gateway (CMD RX)
 
@@ -173,6 +176,33 @@ timeout detail code (`data[7]`):
 | 4:5 | `yaw_rate_deg_s_x10` | `int16` | IMU gyro Z deg/s * 10 (없으면 명령기반 yaw rate) |
 | 6:7 | `center_distance_m_x100` | `int16` | m * 100 |
 
+### 5.5 `0x18FF0340` Weed Actuator 상태
+- Packer: `pack_upper_weed_status()`
+
+| Byte | 신호 | 타입 | 설명 |
+|---|---|---|---|
+| 0 | `status_flags` | `uint8` | actuator 상태 플래그 (`0x18FF00C8 data[3]`) |
+| 1 | `error_code` | `uint8` | actuator 에러 코드 (`0x18FF00C8 data[4]`) |
+| 2 | `current_raw` | `uint8` | 전류 raw (`0.25A/bit`) |
+| 3 | `input_state` | `uint8` | 입력 상태 |
+| 4 | `meta_bits` | `uint8` | bit0 valid, bit1 timeout, bit2 pre_sent |
+| 5 | `target_mm` | `uint8` | 목표 위치(mm, 0..255 clamp) |
+| 6 | `actual_pos_mm` | `uint8` | 실제 위치(mm, 0..255 clamp) |
+| 7 | `speed_mm_s` | `uint8` | 속도(mm/s, 0..255 clamp) |
+
+### 5.6 `0x18FF00C8` Weed Actuator 피드백 RX
+- Decoder: `decode_weed_actuator_status()`
+- position/speed는 디바이스 포맷 기준 little-endian
+
+| Byte | 신호 | 타입 | 설명 |
+|---|---|---|---|
+| 0:1 | `position_x10_mm` | `uint16 (LE)` | 위치(0.1mm) |
+| 2 | `current_raw` | `uint8` | 전류 raw (`0.25A/bit`) |
+| 3 | `status_flags` | `uint8` | 상태 플래그 |
+| 4 | `error_code` | `uint8` | 에러 코드 |
+| 5:6 | `speed_x10_mm_s` | `uint16 (LE)` | 속도(0.1mm/s) |
+| 7 | `input_state` | `uint8` | 입력 상태 |
+
 ## 6. 제어 우선순위 (현재 코드)
 - STOP 우선순위:
   1. `upper_force_stop`
@@ -183,6 +213,7 @@ timeout detail code (`data[7]`):
   - 아니면 `rc_ok && rc_enable && rc_remote_automation && upper.valid && upper.automation`이면 Upper 자동전환
   - 아니면 RC 유효+enable이면 RC 선택(기본 우선순위)
   - 아니면 timeout stop
+- weed actuator 판단은 FSM(`weed_fsm_step`)에서 수행하고, `can_tx_thread`는 pending 프레임 전송만 수행
 - 타임아웃 상수:
   - `UPPER_DRIVE_TIMEOUT_MS = 1000`
   - `MOTOR_TIMEOUT_MS = 500`
