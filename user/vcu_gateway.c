@@ -117,6 +117,8 @@ typedef struct {
   bool pre_sent;
   bool target_latched;
   uint16_t target_active_mm;
+  rt_tick_t pre_guard_start_tick;
+  rt_tick_t move_window_start_tick;
   rt_tick_t last_pos_tx_tick;
 } weed_fsm_ctx_t;
 
@@ -1039,14 +1041,20 @@ static bool weed_period_elapsed(rt_tick_t now, rt_tick_t* last_tick, uint32_t pe
   return false;
 }
 
-/* Weed FSM:
- * - Evaluate actuator run conditions and target transitions
- * - Arm pre-command on each new target cycle
- * - Generate periodic position-command pending events
- * - Keep TX thread as send-only path (consume pending frames)
+static uint32_t tick_to_ms(rt_tick_t now, rt_tick_t start_tick) {
+  if (start_tick == 0)
+    return 0u;
+  return (uint32_t)((now - start_tick) * 1000u / RT_TICK_PER_SECOND);
+}
+
+/* 위치기반 Weed FSM (기존 로직 유지):
+ * - 목표 위치 변경 시 pre 명령(03 FB ...) 1회 전송
+ * - 250ms 주기로 위치 명령 전송
+ * - 실제 위치가 목표 근처에 도달하면 pre를 재무장(re-arm)
+ *   -> 다음 목표 변경 시 다시 pre부터 시작
  */
-static void weed_fsm_step(rt_tick_t now, const rc_intent_t* rc, const upper_status_t* st,
-                          const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
+static void weed_fsm_step_position_based(rt_tick_t now, const rc_intent_t* rc, const upper_status_t* st,
+                                         const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
   bool actuator_requested;
   bool run_allowed;
   bool weed_rx_fresh;
@@ -1076,6 +1084,8 @@ static void weed_fsm_step(rt_tick_t now, const rc_intent_t* rc, const upper_stat
   if (!actuator_requested || !run_allowed) {
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.target_latched = false;
+    g_weed_fsm_ctx.pre_guard_start_tick = 0;
+    g_weed_fsm_ctx.move_window_start_tick = 0;
     g_weed_fsm_ctx.last_pos_tx_tick = 0;
     plan->pre_pending = false;
     plan->pos_pending = false;
@@ -1116,6 +1126,115 @@ static void weed_fsm_step(rt_tick_t now, const rc_intent_t* rc, const upper_stat
 
   plan->pre_sent = g_weed_fsm_ctx.pre_sent;
   plan->rx_timeout = !weed_rx_fresh;
+}
+
+/* 시간기반 Weed FSM (신규 테스트용):
+ * - RC 토글(상/중/하) 목표가 바뀌면 트리거 발생
+ * - 트리거 즉시 pre 명령 1회 전송
+ * - pre 후 WEED_ACT_PRE_GUARD_MS 대기
+ * - 이후 WEED_ACTUATOR_TX_PERIOD_MS(250ms) 주기로 위치 명령 전송
+ * - 트리거 시점부터 WEED_ACT_MOVE_WINDOW_MS(기본 5초) 동안만 송신
+ * - 5초 내 새 트리거가 들어오면 윈도우를 다시 시작
+ * - 위치 피드백은 모니터링/timeout 판단만 사용, 송신 중단 판단은 시간 기준
+ */
+static void weed_fsm_step_time_based(rt_tick_t now, const rc_intent_t* rc, const upper_status_t* st,
+                                     const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
+  bool actuator_requested;
+  bool run_allowed;
+  bool weed_rx_fresh;
+  bool target_changed = false;
+  bool move_window_active = false;
+  bool pre_guard_done = false;
+  uint16_t weed_target_mm;
+
+  if (!rc || !st || !ws || !plan)
+    return;
+
+  actuator_requested = (rc->valid && rc->rc_enable);
+  run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
+  weed_target_mm = rc->weed_target_mm;
+  weed_rx_fresh = ws->valid && is_fresh_tick(now, ws->ts, WEED_ACTUATOR_TIMEOUT_MS);
+  plan->target_mm = weed_target_mm;
+  plan->pre_sent = g_weed_fsm_ctx.pre_sent;
+  plan->rx_timeout = !weed_rx_fresh;
+
+  if (!actuator_requested || !run_allowed) {
+    g_weed_fsm_ctx.pre_sent = false;
+    g_weed_fsm_ctx.target_latched = false;
+    g_weed_fsm_ctx.pre_guard_start_tick = 0;
+    g_weed_fsm_ctx.move_window_start_tick = 0;
+    g_weed_fsm_ctx.last_pos_tx_tick = 0;
+    plan->pre_pending = false;
+    plan->pos_pending = false;
+    plan->pre_sent = false;
+    return;
+  }
+
+  if (!g_weed_fsm_ctx.target_latched) {
+    target_changed = true;
+    g_weed_fsm_ctx.target_latched = true;
+    g_weed_fsm_ctx.target_active_mm = weed_target_mm;
+  } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
+    target_changed = true;
+    g_weed_fsm_ctx.target_active_mm = weed_target_mm;
+  }
+
+  if (target_changed) {
+    g_weed_fsm_ctx.pre_sent = false;
+    g_weed_fsm_ctx.pre_guard_start_tick = 0;
+    g_weed_fsm_ctx.move_window_start_tick = now;
+    g_weed_fsm_ctx.last_pos_tx_tick = 0;
+  }
+
+  if (g_weed_fsm_ctx.move_window_start_tick != 0) {
+    move_window_active = (tick_to_ms(now, g_weed_fsm_ctx.move_window_start_tick) < WEED_ACT_MOVE_WINDOW_MS);
+  }
+
+  if (!move_window_active) {
+    plan->pre_pending = false;
+    plan->pos_pending = false;
+    plan->pre_sent = false;
+    g_weed_fsm_ctx.pre_sent = false;
+    g_weed_fsm_ctx.pre_guard_start_tick = 0;
+    return;
+  }
+
+  if (!g_weed_fsm_ctx.pre_sent) {
+    if (!plan->pre_pending) {
+      pack_weed_actuator_pre_cmd(plan->pre_frame);
+      plan->pre_dlc = 8u;
+      plan->pre_pending = true;
+    }
+    g_weed_fsm_ctx.pre_sent = true;
+    g_weed_fsm_ctx.pre_guard_start_tick = now;
+    plan->pre_sent = true;
+    return;
+  }
+
+  if (g_weed_fsm_ctx.pre_guard_start_tick != 0) {
+    pre_guard_done = (tick_to_ms(now, g_weed_fsm_ctx.pre_guard_start_tick) >= WEED_ACT_PRE_GUARD_MS);
+  }
+  if (!pre_guard_done)
+    return;
+
+  if (weed_period_elapsed(now, &g_weed_fsm_ctx.last_pos_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS) && !plan->pos_pending) {
+    pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
+    plan->pos_dlc = 8u;
+    plan->pos_pending = true;
+  }
+}
+
+/* Weed FSM entry:
+ * WEED_FSM_MODE로 위치기반/시간기반 중 하나를 선택한다.
+ * 기본값은 위치기반(POSITION_BASED)이라 기존 동작이 유지된다.
+ */
+static void weed_fsm_step(rt_tick_t now, const rc_intent_t* rc, const upper_status_t* st,
+                          const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
+#if (WEED_FSM_MODE == WEED_FSM_MODE_TIME_BASED)
+  weed_fsm_step_time_based(now, rc, st, ws, plan);
+#else
+  weed_fsm_step_position_based(now, rc, st, ws, plan);
+#endif
 }
 
 /* ===================== Threads ===================== */

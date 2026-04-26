@@ -55,6 +55,18 @@ extern "C" {
 #define WEED_ACT_POS_MAX_MM    200u
 #define WEED_ACT_POS_SCALE_X10 10u
 
+/* Weed FSM mode select:
+ * - POSITION_BASED: 기존 로직(실제 위치 근접 시 pre 재무장)
+ * - TIME_BASED    : 트리거 후 시간 윈도우 기반 송신
+ */
+#define WEED_FSM_MODE_POSITION_BASED 0u
+#define WEED_FSM_MODE_TIME_BASED     1u
+#define WEED_FSM_MODE                WEED_FSM_MODE_POSITION_BASED
+
+/* TIME_BASED 모드 튜닝값 */
+#define WEED_ACT_PRE_GUARD_MS   250u  /* pre 명령 후 위치명령 시작 지연 */
+#define WEED_ACT_MOVE_WINDOW_MS 5000u /* 트리거 후 위치명령 유지 시간 */
+
 /* ===================== Timeouts ===================== */
 #define UPPER_TIMEOUT_MS         500u
 #define UPPER_DRIVE_TIMEOUT_MS   1000u
