@@ -1158,7 +1158,8 @@ static void weed_fsm_step_time_based(rt_tick_t now, const rc_intent_t* rc, const
   plan->pre_sent = g_weed_fsm_ctx.pre_sent;
   plan->rx_timeout = !weed_rx_fresh;
 
-  if (!actuator_requested || !run_allowed) {
+  //if (!actuator_requested || !run_allowed) {
+	if (!actuator_requested ) {
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.target_latched = false;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
@@ -1268,36 +1269,24 @@ static void sbus_thread_entry(void* parameter) {
 
     if (!sbus_decode_25b_to_channels(frame, &ch, &failsafe, &lost))
       continue;
-#if 0	
-				sbus_data_raw_a.CH1 = ch[0];
-				sbus_data_raw_a.CH2 = ch[1];
-				sbus_data_raw_a.CH3 = ch[2];
-				sbus_data_raw_a.CH4 = ch[3];
-				sbus_data_raw_a.CH5 = ch[4];
-				sbus_data_raw_a.CH6 = ch[5];
-				sbus_data_raw_a.CH7 = ch[6];
-				sbus_data_raw_a.CH8 = ch[7];
-				sbus_data_raw_a.CH9 = ch[8];
-				sbus_data_raw_a.CH10 = ch[9];
-				sbus_data_raw_a.CH11 = ch[10];
-				sbus_data_raw_a.CH12 = ch[11];
-				sbus_data_raw_a.CH13 = ch[12];
-				sbus_data_raw_a.CH14 = ch[13];
-				sbus_data_raw_a.CH15 = ch[14];
-				sbus_data_raw_a.CH16 = ch[15];
+#if 1	
+				sbus_data_raw_a.CH1 = ch.CH1;
+				sbus_data_raw_a.CH2 = ch.CH2;
+				sbus_data_raw_a.CH3 = ch.CH3;
+				sbus_data_raw_a.CH4 = ch.CH4;
+				sbus_data_raw_a.CH5 = ch.CH5;
+				sbus_data_raw_a.CH6 = ch.CH6;
+				sbus_data_raw_a.CH7 = ch.CH7;
+				sbus_data_raw_a.CH8 = ch.CH8;
+				sbus_data_raw_a.CH9 = ch.CH9;
+				sbus_data_raw_a.CH10 = ch.CH10;
+				sbus_data_raw_a.CH11 = ch.CH11;
+				sbus_data_raw_a.CH12 = ch.CH12;
+				sbus_data_raw_a.CH13 = ch.CH13;
+				sbus_data_raw_a.CH14 = ch.CH14;
+				sbus_data_raw_a.CH15 = ch.CH15;
+				sbus_data_raw_a.CH16 = ch.CH16;
 				
-
-
-				
-				make_can_payload_from_sbus(ch[3], cmd);
-				
-				rpm_v[0] = cmd[2];
-				rpm_v[1] = cmd[1];
-				rpm_a = (int16_t)((int16_t)rpm_v[0]|((int16_t)rpm_v[1] << 8));
-				rt_kprintf("rpm :%d\n", rpm_a);
-				for(int i =0; i<8; i++){
-					rt_kprintf("cmd :0x%02X, rpm :%d\n", cmd[i], rpm_a);
-				}
 #endif
     rc_intent_t rc;
     memset(&rc, 0, sizeof(rc));

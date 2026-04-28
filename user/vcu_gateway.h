@@ -61,7 +61,7 @@ extern "C" {
  */
 #define WEED_FSM_MODE_POSITION_BASED 0u
 #define WEED_FSM_MODE_TIME_BASED     1u
-#define WEED_FSM_MODE                WEED_FSM_MODE_POSITION_BASED
+#define WEED_FSM_MODE                WEED_FSM_MODE_TIME_BASED
 
 /* TIME_BASED 모드 튜닝값 */
 #define WEED_ACT_PRE_GUARD_MS   250u  /* pre 명령 후 위치명령 시작 지연 */
