@@ -23,6 +23,7 @@ extern "C" {
 #define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF0320u /* upper feedback: vehicle motion status */
 #define CANID_UPPER_VEHICLE_MON_TX    0x18FF0330u /* upper feedback: vehicle monitor/debug status */
 #define CANID_UPPER_WEED_STATUS_TX    0x18FF0340u /* upper feedback: weed actuator status */
+#define CANID_UPPER_BLADE_STATUS_TX   0x18FF0350u /* upper feedback: blade status */
 
 #define CANID_UPPER_CMD_DRIVE_RX 0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
 #define CANID_UPPER_CMD_RX       0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
@@ -67,6 +68,15 @@ extern "C" {
 #define WEED_POS_DOWN_MM 180u
 #define WEED_POS_MID_MM  90u
 #define WEED_POS_UP_MM   0u
+
+/* Upper weed stage encoding (for 0x18FF0210 data[1]/data[2]) */
+#define UPPER_WEED_STAGE_UP   0u
+#define UPPER_WEED_STAGE_MID  1u
+#define UPPER_WEED_STAGE_DOWN 2u
+
+#define UPPER_BLADE_STAGE_STOP 0u
+#define UPPER_BLADE_STAGE_MID  1u
+#define UPPER_BLADE_STAGE_HIGH 2u
 
 /* actuator position scaling:
  * docs sample: 10mm->0x0064, 200mm->0x07D0 => pos = mm * 10
