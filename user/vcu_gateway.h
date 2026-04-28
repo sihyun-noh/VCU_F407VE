@@ -34,15 +34,34 @@ extern "C" {
 #define CANID_MOTOR_STATUS_RIGHT_RX   0x18FF0020u /* motor driver status right RX */
 #define CANID_WEED_ACTUATOR_TX        0x18EFC800u /* weed actuator control TX */
 #define CANID_WEED_ACTUATOR_STATUS_RX 0x18FF00C8u /* weed actuator feedback RX (CYL->VCU) */
+#define CANID_BLADE_LEFT_TX           0x18FF3200u /* left blade command TX */
+#define CANID_BLADE_RIGHT_TX          0x18FF3000u /* right blade command TX */
+#define CANID_BLADE_LEFT_RX           0x18FF0032u /* left blade status RX */
+#define CANID_BLADE_RIGHT_RX          0x18FF0030u /* right blade status RX */
 
 #define CAN_TX_PERIOD_MS           100u /* motor cmd + upper status, 100ms */
 #define FSM_PERIOD_MS              10u  /* arbitration tick */
 #define WEED_ACTUATOR_TX_PERIOD_MS 250u /* periodic actuator command TX */
+#define BLADE_TX_PERIOD_MS         250u /* blade command periodic TX */
 
 /* RC left toggle(CH5) exact raw positions (3-position switch). */
 #define WEED_CH5_RAW_DOWN 272u  /* weed down */
 #define WEED_CH5_RAW_MID  992u  /* weed mid */
 #define WEED_CH5_RAW_UP   1712u /* weed up (home) */
+
+/* RC CH6 raw positions for blade speed stage (nearest-match mapping). */
+#define BLADE_CH6_RAW_LOW  272u
+#define BLADE_CH6_RAW_MID  992u
+#define BLADE_CH6_RAW_HIGH 1712u
+
+/* RC CH6 mapped blade rpm stage (0/250/500rpm). */
+#define BLADE_RPM_STAGE_LOW  0u
+#define BLADE_RPM_STAGE_MID  250u
+#define BLADE_RPM_STAGE_HIGH 500u
+
+/* Blade command constants */
+#define BLADE_CMD_ENABLE_BITS MOTOR_DRV_DEFAULT_ENABLE_BITS
+#define BLADE_CMD_ACCEL       0x32u
 
 /* CH5 mapped actuator target in mm (meaning-oriented naming). */
 #define WEED_POS_DOWN_MM 180u

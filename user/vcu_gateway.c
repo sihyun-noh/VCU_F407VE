@@ -41,6 +41,7 @@ typedef struct {
   bool rc_drive_mode;        /* RC C button: drive flag */
   bool cultivator_down;
   bool cultivator_on;
+  uint16_t blade_rpm_cmd; /* RC CH6 mapped blade rpm stage: 0/250/500 */
   uint16_t weed_target_mm; /* RC left toggle mapped target: 0/90/180 mm */
   int16_t axis1;           /* rc Right stick up/down */
   int16_t axis2;           /* rc Right stick left/right */
@@ -93,6 +94,16 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
+  uint8_t fault_bits;
+  uint8_t temperature;
+  int16_t rpm_axis1;
+  int16_t rpm_axis2;
+  int16_t supply_volt;
+} blade_status_t;
+
+typedef struct {
+  rt_tick_t ts;
+  bool valid;
   uint16_t position_x10_mm; /* byte0-1, little-endian, 0.1mm */
   uint8_t current_raw;      /* byte2, 0.25A/bit */
   uint8_t status_flags;     /* byte3 */
@@ -102,6 +113,7 @@ typedef struct {
 } weed_actuator_status_t;
 
 typedef struct {
+  /* pending=true means "prepared by FSM, not sent yet by TX thread". */
   bool pre_pending;
   bool pos_pending;
   uint8_t pre_frame[8];
@@ -121,6 +133,10 @@ typedef struct {
   rt_tick_t move_window_start_tick;
   rt_tick_t last_pos_tx_tick;
 } weed_fsm_ctx_t;
+
+typedef struct {
+  uint16_t rpm_cmd; /* stage command from RC mapping: 0/250/500 */
+} blade_cmd_t;
 
 typedef struct {
   rt_tick_t ts;
@@ -175,6 +191,9 @@ struct {
 
   motor_status_t motor_left;
   motor_status_t motor_right;
+  blade_status_t blade_left;
+  blade_status_t blade_right;
+  blade_cmd_t blade_cmd;
   weed_actuator_status_t weed_actuator;
   weed_tx_plan_t weed_tx_plan;
   upper_status_t upper_vcu_st;
@@ -281,6 +300,25 @@ static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
   if (d_mid <= d_down && d_mid <= d_up)
     return WEED_POS_MID_MM;
   return WEED_POS_UP_MM;
+}
+
+static uint16_t map_ch6_to_blade_rpm(uint16_t ch6_raw) {
+  uint32_t d_low;
+  uint32_t d_mid;
+  uint32_t d_high;
+
+  d_low =
+      (ch6_raw >= BLADE_CH6_RAW_LOW) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_LOW) : (uint32_t)(BLADE_CH6_RAW_LOW - ch6_raw);
+  d_mid =
+      (ch6_raw >= BLADE_CH6_RAW_MID) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_MID) : (uint32_t)(BLADE_CH6_RAW_MID - ch6_raw);
+  d_high = (ch6_raw >= BLADE_CH6_RAW_HIGH) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_HIGH)
+                                           : (uint32_t)(BLADE_CH6_RAW_HIGH - ch6_raw);
+
+  if (d_low <= d_mid && d_low <= d_high)
+    return BLADE_RPM_STAGE_LOW;
+  if (d_mid <= d_low && d_mid <= d_high)
+    return BLADE_RPM_STAGE_MID;
+  return BLADE_RPM_STAGE_HIGH;
 }
 
 /* MPU6050 gyro config is set to +-2000dps (GYRO_CONFIG=0x18): 16.4 LSB/(deg/s). */
@@ -825,6 +863,24 @@ static bool decode_motor_status(const can_frame_t* rx, uint32_t expect_id, motor
   return true;
 }
 
+static bool decode_blade_status(const can_frame_t* rx, uint32_t expect_id, blade_status_t* out) {
+  motor_status_t tmp;
+  if (!out)
+    return false;
+  if (!decode_motor_status(rx, expect_id, &tmp))
+    return false;
+
+  memset(out, 0, sizeof(*out));
+  out->ts = tmp.ts;
+  out->valid = tmp.valid;
+  out->fault_bits = tmp.fault_bits;
+  out->temperature = tmp.temperature;
+  out->rpm_axis1 = tmp.rpm_axis1;
+  out->rpm_axis2 = tmp.rpm_axis2;
+  out->supply_volt = tmp.supply_volt;
+  return true;
+}
+
 /* Motor cmd TX payload (adjust to motor driver spec) */
 static void pack_motor_cmd(const motor_cmd_t* cmd, uint8_t out[8]) {
   memset(out, 0, 8);
@@ -839,6 +895,30 @@ static void pack_motor_cmd(const motor_cmd_t* cmd, uint8_t out[8]) {
   // out[5] = (uint8_t)(cmd->rpm_axis1 & 0xFF);
   out[6] = (uint8_t)(cmd->axis1_accel_bit & 0xFF);
   out[7] = (uint8_t)(0x00);
+}
+
+/* Blade command payload:
+ * - left blade : single-axis valid (axis1=rpm, axis2=0)
+ * - right blade: dual-axis same rpm (axis1=axis2=rpm)
+ */
+static void pack_blade_cmd_frame(bool left_side, uint16_t rpm_cmd, uint8_t out[8]) {
+  motor_cmd_t blade_cmd;
+  int16_t rpm = (int16_t)clamp_i32((int32_t)rpm_cmd, 0, rcm_max_driver_i32());
+
+  memset(&blade_cmd, 0, sizeof(blade_cmd));
+  blade_cmd.enable_bit = BLADE_CMD_ENABLE_BITS;
+  blade_cmd.axis1_accel_bit = BLADE_CMD_ACCEL;
+  blade_cmd.axis2_accel_bit = BLADE_CMD_ACCEL;
+
+  if (left_side) {
+    blade_cmd.rpm_axis1 = rpm;
+    blade_cmd.rpm_axis2 = 0;
+  } else {
+    blade_cmd.rpm_axis1 = rpm;
+    blade_cmd.rpm_axis2 = rpm;
+  }
+
+  pack_motor_cmd(&blade_cmd, out);
 }
 
 /* Upper status TX 0x18FF0310 (gateway status) */
@@ -1047,6 +1127,24 @@ static uint32_t tick_to_ms(rt_tick_t now, rt_tick_t start_tick) {
   return (uint32_t)((now - start_tick) * 1000u / RT_TICK_PER_SECOND);
 }
 
+/* Blade command decision:
+ * - RC CH6 stage(0/250/500rpm) 기반으로 blade 목표 rpm을 계산
+ * - FSM STOP/timeout/fault 조건이면 rpm=0으로 강제
+ * - 실제 CAN 송신 주기 제어는 TX thread가 담당(250ms periodic)
+ */
+static void blade_cmd_step(const rc_intent_t* rc, const upper_status_t* st, blade_cmd_t* out) {
+  bool run_allowed;
+  bool rc_allowed;
+
+  if (!rc || !st || !out)
+    return;
+
+  rc_allowed = (rc->valid && rc->rc_enable);
+  run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
+
+  out->rpm_cmd = (rc_allowed && run_allowed) ? rc->blade_rpm_cmd : 0u;
+}
+
 /* 위치기반 Weed FSM (기존 로직 유지):
  * - 목표 위치 변경 시 pre 명령(03 FB ...) 1회 전송
  * - 250ms 주기로 위치 명령 전송
@@ -1110,6 +1208,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, const rc_intent_t* rc, c
   // Requested payload spec: 03 FB 00 00 00 00 00
   if (!g_weed_fsm_ctx.pre_sent && !weed_pos_reached) {
     if (!plan->pre_pending) {
+      /* Mark pending so TX thread can send this event frame asynchronously. */
       pack_weed_actuator_pre_cmd(plan->pre_frame);
       plan->pre_dlc = 8u;
       plan->pre_pending = true;
@@ -1119,6 +1218,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, const rc_intent_t* rc, c
 
   pos_due = weed_period_elapsed(now, &g_weed_fsm_ctx.last_pos_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS);
   if (pos_due && !plan->pos_pending) {
+    /* Keep latest periodic position frame pending until TX thread consumes it. */
     pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
     plan->pos_dlc = 8u;
     plan->pos_pending = true;
@@ -1202,6 +1302,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, const rc_intent_t* rc, const
 
   if (!g_weed_fsm_ctx.pre_sent) {
     if (!plan->pre_pending) {
+      /* One-shot pre frame is queued by pending flag and consumed by TX thread. */
       pack_weed_actuator_pre_cmd(plan->pre_frame);
       plan->pre_dlc = 8u;
       plan->pre_pending = true;
@@ -1219,6 +1320,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, const rc_intent_t* rc, const
     return;
 
   if (weed_period_elapsed(now, &g_weed_fsm_ctx.last_pos_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS) && !plan->pos_pending) {
+    /* During move-window, periodic position frame stays pending until TX consumes it. */
     pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
     plan->pos_dlc = 8u;
     plan->pos_pending = true;
@@ -1305,7 +1407,8 @@ static void sbus_thread_entry(void* parameter) {
     /* TODO: map channels properly */
     rc.weed_target_mm = map_ch5_to_weed_target_mm(ch.CH5);
     rc.cultivator_down = (rc.weed_target_mm > 0u);
-    rc.cultivator_on = (ch.CH6 > 1000);
+    rc.blade_rpm_cmd = map_ch6_to_blade_rpm(ch.CH6);
+    rc.cultivator_on = (rc.blade_rpm_cmd > 0u);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
     /* RC C button (CH10):
@@ -1366,6 +1469,9 @@ static void fsm_thread_entry(void* parameter) {
   upper_intent_auto_t upper_auto;
   motor_status_t motor_left_st;
   motor_status_t motor_right_st;
+  blade_status_t blade_left_st;
+  blade_status_t blade_right_st;
+  blade_cmd_t blade_cmd;
   weed_actuator_status_t weed_st;
   weed_tx_plan_t weed_plan;
   vcu_motion_monitor_t motion_monitor;
@@ -1382,6 +1488,9 @@ static void fsm_thread_entry(void* parameter) {
     /* motor driver status */
     motor_left_st = g_latest.motor_left;
     motor_right_st = g_latest.motor_right;
+    blade_left_st = g_latest.blade_left;
+    blade_right_st = g_latest.blade_right;
+    blade_cmd = g_latest.blade_cmd;
     weed_st = g_latest.weed_actuator;
     weed_plan = g_latest.weed_tx_plan;
     motion_monitor = g_latest.motion_monitor;
@@ -1616,6 +1725,10 @@ static void fsm_thread_entry(void* parameter) {
 
     /* Weed FSM step: decide pre/periodic actuator commands and status meta. */
     weed_fsm_step(now, &rc, &out_st, &weed_st, &weed_plan);
+    /* Blade command step: decide blade rpm target (TX periodic is handled by can_tx_thread). */
+    blade_cmd_step(&rc, &out_st, &blade_cmd);
+    (void)blade_left_st;
+    (void)blade_right_st;
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
@@ -1626,6 +1739,7 @@ static void fsm_thread_entry(void* parameter) {
     weed_plan.pre_pending = (g_latest.weed_tx_plan.pre_pending || weed_plan.pre_pending);
     weed_plan.pos_pending = (g_latest.weed_tx_plan.pos_pending || weed_plan.pos_pending);
     g_latest.weed_tx_plan = weed_plan;
+    g_latest.blade_cmd = blade_cmd;
     g_latest.motion_monitor = motion_monitor;
     rt_mutex_release(g_lock);
   }
@@ -1686,6 +1800,23 @@ static void can_rx_thread_entry(void* parameter) {
         rt_mutex_release(g_lock);
         continue;
       }
+
+      /* blade driver left status */
+      blade_status_t bs_left;
+      if (decode_blade_status(&rx, CANID_BLADE_LEFT_RX, &bs_left)) {
+        rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+        g_latest.blade_left = bs_left;
+        rt_mutex_release(g_lock);
+        continue;
+      }
+      /* blade driver right status */
+      blade_status_t bs_right;
+      if (decode_blade_status(&rx, CANID_BLADE_RIGHT_RX, &bs_right)) {
+        rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+        g_latest.blade_right = bs_right;
+        rt_mutex_release(g_lock);
+        continue;
+      }
     }
   }
 }
@@ -1703,8 +1834,10 @@ static void can_tx_thread_entry(void* parameter) {
     upper_status_rpm_t st_rpm;
     vcu_motion_monitor_t mon;
     rc_intent_t rc;
+    blade_cmd_t blade_cmd;
     weed_actuator_status_t weed_st;
     weed_tx_plan_t weed_plan;
+    static rt_tick_t last_blade_tx_tick = 0;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     cmd_left = g_latest.motor_cmd_left;
@@ -1713,15 +1846,20 @@ static void can_tx_thread_entry(void* parameter) {
     st_rpm = g_latest.upper_rpm_st;
     mon = g_latest.motion_monitor;
     rc = g_latest.rc;
+    blade_cmd = g_latest.blade_cmd;
     weed_st = g_latest.weed_actuator;
     weed_plan = g_latest.weed_tx_plan;
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
+    bool blade_tx_due;
     bool sent_pre = false;
     bool sent_pos = false;
 
-    /* TX role only: send pending weed frames generated by weed_fsm_step(). */
+    /* Actuator uses pending semantics:
+     * FSM prepares event frames(pre/pos) and marks pending=true.
+     * TX thread consumes and clears pending only after successful send.
+     */
     if (weed_plan.pre_pending) {
       sent_pre = can_hw_send_ext(CANID_WEED_ACTUATOR_TX, weed_plan.pre_frame, weed_plan.pre_dlc);
     }
@@ -1735,6 +1873,17 @@ static void can_tx_thread_entry(void* parameter) {
       if (sent_pos)
         g_latest.weed_tx_plan.pos_pending = false;
       rt_mutex_release(g_lock);
+    }
+
+    /* Blade is periodic stream like motor command (no pending):
+     * send both sides every BLADE_TX_PERIOD_MS using latest blade_cmd.rpm_cmd.
+     */
+    blade_tx_due = weed_period_elapsed(now_tick(), &last_blade_tx_tick, BLADE_TX_PERIOD_MS);
+    if (blade_tx_due) {
+      pack_blade_cmd_frame(true, blade_cmd.rpm_cmd, d0);
+      (void)can_hw_send_ext(CANID_BLADE_LEFT_TX, d0, 8);
+      pack_blade_cmd_frame(false, blade_cmd.rpm_cmd, d0);
+      (void)can_hw_send_ext(CANID_BLADE_RIGHT_TX, d0, 8);
     }
 
     /* Driver 1 real operation(run signal)*/
