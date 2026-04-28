@@ -30,7 +30,10 @@
 | Gateway -> Upper | `0x18FF0320` | 100 ms | 차량 운동 상태 |
 | Gateway -> Upper | `0x18FF0330` | 100 ms | 차량 모니터/디버그 |
 | Gateway -> Upper | `0x18FF0340` | 100 ms | weed actuator 상태 |
+| Gateway -> Upper | `0x18FF0350` | 100 ms | blade 상태 |
 | Weed actuator -> Gateway | `0x18FF00C8` | 100 ms | weed actuator 피드백 |
+| Blade -> Gateway | `0x18FF0032` | 100 ms | blade left 상태 피드백 |
+| Blade -> Gateway | `0x18FF0030` | 100 ms | blade right 상태 피드백 |
 
 ## 4. Upper -> Gateway (CMD RX)
 
@@ -65,8 +68,8 @@
 | Byte | 신호 | 타입 | 설명 |
 |---|---|---|---|
 | 0 | `automation` | `bool (bit0)` | automation 신호 (RC remote automation과 함께 릴레이 동작에 사용) |
-| 1 | `cultivator_down` | `bool (bit0)` | 작업기 하강 (좌 토글) |
-| 2 | `cultivator_on` | `bool (bit0)` | 제초기/작업기 ON (우 토글) |
+| 1 | `weed_target` | `uint8` | weed target stage(0=UP,1=MID,2=DOWN) 또는 direct mm(0..200) |
+| 2 | `blade_cmd` | `uint8` | blade stage(0=STOP,1=MID,2=HIGH) 또는 direct rpm(0..max) |
 | 3 | `upper_force_stop` | `bool (bit0)` | E-stop 요청 |
 | 4 | `upper_force_active` | `bool (bit0)` | Upper 강제 선택 플래그 |
 | 5 | `relay_mask` | `uint8` | 릴레이 마스크 |
@@ -190,7 +193,22 @@ timeout detail code (`data[7]`):
 | 6 | `actual_pos_mm` | `uint8` | 실제 위치(mm, 0..255 clamp) |
 | 7 | `speed_mm_s` | `uint8` | 속도(mm/s, 0..255 clamp) |
 
-### 5.6 `0x18FF00C8` Weed Actuator 피드백 RX
+
+### 5.6 `0x18FF0350` Blade 상태
+- Packer: `pack_upper_blade_status()`
+
+| Byte | 신호 | 타입 | 설명 |
+|---|---|---|---|
+| 0 | `left_fault_bits` | `uint8` | blade left fault |
+| 1 | `right_fault_bits` | `uint8` | blade right fault |
+| 2 | `blade_cmd_rpm` | `uint8` | 현재 blade command rpm(0..255 clamp) |
+| 3 | `src_mask` | `uint8` | bit0 RC, bit1 UPPER_AUTO, bit2 STOP |
+| 4 | `left_rpm_axis1_div10` | `int8` | left rpm axis1 / 10 |
+| 5 | `right_rpm_axis1_div10` | `int8` | right rpm axis1 / 10 |
+| 6 | `left_meta` | `uint8` | bit0 valid, bit1 fresh |
+| 7 | `right_meta` | `uint8` | bit0 valid, bit1 fresh |
+
+### 5.7 `0x18FF00C8` Weed Actuator 피드백 RX
 - Decoder: `decode_weed_actuator_status()`
 - position/speed는 디바이스 포맷 기준 little-endian
 
@@ -214,6 +232,10 @@ timeout detail code (`data[7]`):
   - 아니면 RC 유효+enable이면 RC 선택(기본 우선순위)
   - 아니면 timeout stop
 - weed actuator 판단은 FSM(`weed_fsm_step`)에서 수행하고, `can_tx_thread`는 pending 프레임 전송만 수행
+- blade 경로는 FSM의 `blade_fsm_step()`에서 처리
+  - `blade_cmd_step()`에서 목표 rpm 결정
+  - `blade_tx_plan_step()`에서 RC B 버튼(`rc_enable`) ON일 때만 250ms 주기 pending 프레임 생성
+  - `can_tx_thread`는 blade pending 프레임 소비/송신만 수행
 - 타임아웃 상수:
   - `UPPER_DRIVE_TIMEOUT_MS = 1000`
   - `MOTOR_TIMEOUT_MS = 500`

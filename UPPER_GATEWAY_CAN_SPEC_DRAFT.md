@@ -30,7 +30,10 @@ Normalization scale (unified):
 | Gateway -> Upper | `0x18FF0320` | 100 ms | Vehicle motion status |
 | Gateway -> Upper | `0x18FF0330` | 100 ms | Vehicle monitor/debug |
 | Gateway -> Upper | `0x18FF0340` | 100 ms | Weed actuator status |
+| Gateway -> Upper | `0x18FF0350` | 100 ms | Blade status |
 | Weed actuator -> Gateway | `0x18FF00C8` | 100 ms | Weed actuator feedback |
+| Blade -> Gateway | `0x18FF0032` | 100 ms | Blade left feedback |
+| Blade -> Gateway | `0x18FF0030` | 100 ms | Blade right feedback |
 
 ## 4. Upper -> Gateway (CMD RX)
 
@@ -63,8 +66,8 @@ Apply rule in current code:
 | Byte | Signal | Type | Description |
 |---|---|---|---|
 | 0 | `automation` | `bool (bit0)` | Automation signal (used with RC remote automation for relay behavior) |
-| 1 | `cultivator_down` | `bool (bit0)` | Lower implement to the ground for field operation (RC left toggle) |
-| 2 | `cultivator_on` | `bool (bit0)` | Turn weeding/cultivator motor ON (start) (RC right toggle) |
+| 1 | `weed_target` | `uint8` | Weed target stage(0=UP,1=MID,2=DOWN) or direct mm (0..200) |
+| 2 | `blade_cmd` | `uint8` | Blade stage(0=STOP,1=MID,2=HIGH) or direct rpm (0..max) |
 | 3 | `upper_force_stop` | `bool (bit0)` | E-stop request |
 | 4 | `upper_force_active` | `bool (bit0)` | Force-upper mode flag |
 | 5 | `relay_mask` | `uint8` | Relay command mask |
@@ -188,7 +191,22 @@ Timeout detail code (`data[7]`) mapping:
 | 6 | `actual_pos_mm` | `uint8` | actual position in mm (clamped 0..255) |
 | 7 | `speed_mm_s` | `uint8` | speed in mm/s (clamped 0..255) |
 
-### 5.6 `0x18FF00C8` Weed Actuator Feedback RX
+
+### 5.6 `0x18FF0350` Blade Status
+- Packer: `pack_upper_blade_status()`
+
+| Byte | Signal | Type | Description |
+|---|---|---|---|
+| 0 | `left_fault_bits` | `uint8` | blade left fault bits |
+| 1 | `right_fault_bits` | `uint8` | blade right fault bits |
+| 2 | `blade_cmd_rpm` | `uint8` | current blade command rpm (0..255 clamp) |
+| 3 | `src_mask` | `uint8` | bit0 RC, bit1 UPPER_AUTO, bit2 STOP |
+| 4 | `left_rpm_axis1_div10` | `int8` | left rpm axis1 / 10 |
+| 5 | `right_rpm_axis1_div10` | `int8` | right rpm axis1 / 10 |
+| 6 | `left_meta` | `uint8` | bit0 valid, bit1 fresh |
+| 7 | `right_meta` | `uint8` | bit0 valid, bit1 fresh |
+
+### 5.7 `0x18FF00C8` Weed Actuator Feedback RX
 - Decoder: `decode_weed_actuator_status()`
 - Byte order: little-endian for position/speed fields (device-native)
 
@@ -213,6 +231,10 @@ Timeout detail code (`data[7]`) mapping:
   - else -> timeout stop
 - Summary: default control source priority is RC first; Upper is entered only by force or auto handover gate.
 - Weed actuator decision is evaluated in FSM (`weed_fsm_step()`), while `can_tx_thread` only transmits pre-built pending weed frames.
+- Blade command path is handled in FSM by `blade_fsm_step()`:
+  - `blade_cmd_step()` decides target rpm.
+  - `blade_tx_plan_step()` creates 250ms periodic pending frames only when RC B button(`rc_enable`) is ON.
+  - `can_tx_thread` only consumes/transmits pending blade frames.
 - Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
 - Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
 - RC freshness timeout: `SBUS_TIMEOUT_MS = 1000 ms`

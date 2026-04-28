@@ -241,3 +241,30 @@
 ## 3. 비고
 - 모니터링(`0x18FF0320/0330`)은 현재 명령 기반 적분값임
 - 실측 RPM 기반으로 바꾸려면 `update_motion_monitor()` 입력 소스 변경 필요
+
+
+### 1.1 Weed/Blade Upper CMD/STATE 연동 (2026-04-28)
+- 대상 파일:
+  - `user/vcu_gateway.h`
+  - `user/vcu_gateway.c`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT.md`
+  - `UPPER_GATEWAY_CAN_SPEC_DRAFT_KR.md`
+  - `UPPER_VCU_STATUS_GUIDE.md`
+  - `VCU_GATEWAY_REFERENCE.md`
+- 변경 내용:
+  - Upper config(`0x18FF0210`)의 weed/blade 명령 해석 확장
+    - `data[1]`: weed target(stage 또는 mm)
+    - `data[2]`: blade cmd(stage 또는 rpm)
+  - FSM에서 RC/Upper 게이트 기반 선택값 적용
+    - `weed_target_selected`, `blade_rpm_selected`
+    - gate: `weed_cmd_active = upper_auto_ready || rc_active`
+  - 신규 상위 보고 ID 추가
+    - `0x18FF0350` (`Gateway -> Upper`, blade status)
+  - blade 제어 구조 명확화
+    - `blade_cmd_step()`에서 목표 rpm 결정
+    - `blade_tx_plan_step()`에서 250ms 주기 pending 생성
+    - RC B 버튼(`rc_enable`) ON 조건에서만 blade 주기 송신 활성화
+    - `blade_fsm_step()`로 blade 명령/전송계획 흐름 통합
+    - `can_tx_thread`는 pending blade frame 소비/송신만 수행
+  - actuator는 기존 pending 구조 유지
+    - pre/periodic event frame를 FSM에서 생성, TX thread가 소비

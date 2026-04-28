@@ -28,6 +28,7 @@
     - STOP 우선순위 적용
     - RC 제어 / Upper 제어 경로 선택
     - weed FSM(`weed_fsm_step`)에서 actuator pre/periodic 판단 및 pending frame 생성
+    - blade FSM(`blade_fsm_step`)에서 목표 rpm 결정 + pending frame 생성(RC B enable gate)
     - 모터 cmd, 상위 보고 status, timeout detail 계산
   - 출력:
     - `g_latest.motor_cmd_left/right`
@@ -40,7 +41,9 @@
   - 처리:
     - `0x18FF0200` drive 명령 파싱
     - `0x18FF0210` config 명령 파싱
-    - `0x18FF00C8` weed actuator feedback 파싱
+    - `0x18FF00C8` weed actuator feedback
+- `0x18FF0032` blade left status
+- `0x18FF0030` blade right status 파싱
     - `0x18FF0021/0020` 모터 상태 파싱
   - 출력: `g_latest.upper_*`, `g_latest.motor_*` 갱신
 
@@ -52,7 +55,9 @@
     - 상위 상태(`0x18FF0310`, `0x18FF0300`)
     - 차량 모니터링(`0x18FF0320`, `0x18FF0330`)
     - weed actuator 상태(`0x18FF0340`)
+    - blade 상태(`0x18FF0350`)
     - weed actuator 제어(`0x18EFC800`, pending frame만 전송)
+    - blade 제어(`0x18FF3200`, `0x18FF3000`, 250ms periodic)
 
 ## 2-1) 모듈 책임 경계 (권장 구조)
 
@@ -117,6 +122,8 @@
 - `0x18FF0021` left motor status
 - `0x18FF0020` right motor status
 - `0x18FF00C8` weed actuator feedback
+- `0x18FF0032` blade left status
+- `0x18FF0030` blade right status
 
 ### TX
 - `0x18FF2100` Gateway -> Driver1(left) cmd
@@ -126,7 +133,10 @@
 - `0x18FF0320` vehicle motion status
 - `0x18FF0330` vehicle monitor/debug status
 - `0x18FF0340` weed actuator status
+- `0x18FF0350` blade status
 - `0x18EFC800` weed actuator command
+- `0x18FF3200` blade left command
+- `0x18FF3000` blade right command
 
 ## 5) FSM 제어 우선순위
 - STOP 우선순위:
