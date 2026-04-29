@@ -41,7 +41,7 @@ typedef struct {
   bool rc_drive_mode;        /* RC C button: drive flag */
   bool cultivator_down;
   bool cultivator_on;
-  uint16_t blade_rpm_cmd; /* RC CH6 mapped blade rpm stage: 0/250/500 */
+  uint16_t blade_rpm_cmd;  /* RC CH6 mapped blade rpm stage: 0/250/500 */
   uint16_t weed_target_mm; /* RC left toggle mapped target: 0/90/180 mm */
   int16_t axis1;           /* rc Right stick up/down */
   int16_t axis2;           /* rc Right stick left/right */
@@ -55,16 +55,16 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  bool automation;         /* data[0]: upper automation gate */
-  bool cultivator_down;    /* data[1] */
-  bool cultivator_on;      /* data[2] */
+  bool automation;               /* data[0]: upper automation gate */
+  bool cultivator_down;          /* data[1] */
+  bool cultivator_on;            /* data[2] */
   uint16_t upper_weed_target_mm; /* decoded from data[1] stage or direct mm */
   uint16_t upper_blade_rpm_cmd;  /* decoded from data[2] stage or direct rpm */
-  bool upper_force_stop;   /* data[3]: E-stop */
-  bool upper_force_active; /* data[4]: force upper mode */
-  uint8_t relay_mask;      /* data[5] */
-  uint8_t left_accel_cmd;  /* data[6]: left accel (0..255) */
-  uint8_t right_accel_cmd; /* data[7]: right accel (0..255) */
+  bool upper_force_stop;         /* data[3]: E-stop */
+  bool upper_force_active;       /* data[4]: force upper mode */
+  uint8_t relay_mask;            /* data[5] */
+  uint8_t left_accel_cmd;        /* data[6]: left accel (0..255) */
+  uint8_t right_accel_cmd;       /* data[7]: right accel (0..255) */
 } upper_intent_t;
 
 typedef struct {
@@ -117,20 +117,33 @@ typedef struct {
 typedef struct {
   /* pending=true means "prepared by FSM, not sent yet by TX thread". */
   bool pre_pending;
+  bool dir_pending;
   bool pos_pending;
   uint8_t pre_frame[8];
+  uint8_t dir_frame[8];
   uint8_t pos_frame[8];
   uint8_t pre_dlc;
+  uint8_t dir_dlc;
   uint8_t pos_dlc;
   uint16_t target_mm;
   bool pre_sent;
   bool rx_timeout;
 } weed_tx_plan_t;
 
+typedef enum {
+  WEED_SEQ_IDLE = 0,
+  WEED_SEQ_WAIT_PRE1_SENT,
+  WEED_SEQ_WAIT_DIR_SENT,
+  WEED_SEQ_WAIT_PRE2_SENT,
+  WEED_SEQ_POS_STREAM,
+} weed_seq_state_t;
+
 typedef struct {
   bool pre_sent;
   bool target_latched;
   uint16_t target_active_mm;
+  bool move_is_down;
+  weed_seq_state_t seq_state;
   rt_tick_t pre_guard_start_tick;
   rt_tick_t move_window_start_tick;
   rt_tick_t last_pos_tx_tick;
@@ -339,10 +352,10 @@ static uint16_t map_ch6_to_blade_rpm(uint16_t ch6_raw) {
   uint32_t d_mid;
   uint32_t d_high;
 
-  d_low =
-      (ch6_raw >= BLADE_CH6_RAW_LOW) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_LOW) : (uint32_t)(BLADE_CH6_RAW_LOW - ch6_raw);
-  d_mid =
-      (ch6_raw >= BLADE_CH6_RAW_MID) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_MID) : (uint32_t)(BLADE_CH6_RAW_MID - ch6_raw);
+  d_low = (ch6_raw >= BLADE_CH6_RAW_LOW) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_LOW)
+                                         : (uint32_t)(BLADE_CH6_RAW_LOW - ch6_raw);
+  d_mid = (ch6_raw >= BLADE_CH6_RAW_MID) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_MID)
+                                         : (uint32_t)(BLADE_CH6_RAW_MID - ch6_raw);
   d_high = (ch6_raw >= BLADE_CH6_RAW_HIGH) ? (uint32_t)(ch6_raw - BLADE_CH6_RAW_HIGH)
                                            : (uint32_t)(BLADE_CH6_RAW_HIGH - ch6_raw);
 
@@ -1168,6 +1181,25 @@ static void pack_weed_actuator_pre_cmd(uint8_t out[8]) {
   out[1] = 0xFB;
 }
 
+static void pack_weed_actuator_pre_in_cmd(uint8_t out[8]) {
+  memset(out, 0, 8);
+  out[0] = 0x02;
+  out[1] = 0xFB;
+}
+
+static void pack_weed_actuator_pre_out_cmd(uint8_t out[8]) {
+  memset(out, 0, 8);
+  out[0] = 0x01;
+  out[1] = 0xFB;
+}
+
+static void pack_weed_actuator_dir_cmd(bool move_down, uint8_t out[8]) {
+  if (move_down) {
+    pack_weed_actuator_pre_out_cmd(out); /* down: per_out */
+  } else {
+    pack_weed_actuator_pre_in_cmd(out); /* up: per_in */
+  }
+}
 /* Weed actuator position command (250ms periodic):
  * - position value goes to data[0:1] (u16, little-endian)
  * - data[2:3] are fixed 0xFB, 0xFB
@@ -1302,10 +1334,12 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
   if (!actuator_requested || !run_allowed) {
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.target_latched = false;
+    g_weed_fsm_ctx.seq_state = WEED_SEQ_IDLE;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
     g_weed_fsm_ctx.move_window_start_tick = 0;
     g_weed_fsm_ctx.last_pos_tx_tick = 0;
     plan->pre_pending = false;
+    plan->dir_pending = false;
     plan->pos_pending = false;
     plan->pre_sent = false;
     return;
@@ -1313,9 +1347,11 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
 
   if (!g_weed_fsm_ctx.target_latched) {
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
+    g_weed_fsm_ctx.move_is_down = (weed_target_mm > WEED_POS_UP_MM);
     g_weed_fsm_ctx.target_latched = true;
     g_weed_fsm_ctx.pre_sent = false;
   } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
+    g_weed_fsm_ctx.move_is_down = (weed_target_mm > g_weed_fsm_ctx.target_active_mm);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
     g_weed_fsm_ctx.pre_sent = false;
   }
@@ -1350,8 +1386,9 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
 
 /* 시간기반 Weed FSM (신규 테스트용):
  * - RC 토글(상/중/하) 목표가 바뀌면 트리거 발생
- * - 트리거 즉시 pre 명령 1회 전송
- * - pre 후 WEED_ACT_PRE_GUARD_MS 대기
+ * - 트리거 시 시퀀스: pre(03 FB) -> direction(01/02 FB) -> pre(03 FB) -> position periodic
+ * - 두 pre/direction은 pending clear(송신 완료) 이후 다음 단계로 진행
+ * - pre2 후 WEED_ACT_PRE_GUARD_MS 대기
  * - 이후 WEED_ACTUATOR_TX_PERIOD_MS(250ms) 주기로 위치 명령 전송
  * - 트리거 시점부터 WEED_ACT_MOVE_WINDOW_MS(기본 5초) 동안만 송신
  * - 5초 내 새 트리거가 들어오면 윈도우를 다시 시작
@@ -1364,6 +1401,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   bool target_changed = false;
   bool move_window_active = false;
   bool pre_guard_done = false;
+  bool can_send_next = false;
 
   if (!st || !ws || !plan)
     return;
@@ -1377,10 +1415,12 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   if (!actuator_requested || !run_allowed) {
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.target_latched = false;
+    g_weed_fsm_ctx.seq_state = WEED_SEQ_IDLE;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
     g_weed_fsm_ctx.move_window_start_tick = 0;
     g_weed_fsm_ctx.last_pos_tx_tick = 0;
     plan->pre_pending = false;
+    plan->dir_pending = false;
     plan->pos_pending = false;
     plan->pre_sent = false;
     return;
@@ -1389,17 +1429,21 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   if (!g_weed_fsm_ctx.target_latched) {
     target_changed = true;
     g_weed_fsm_ctx.target_latched = true;
+    g_weed_fsm_ctx.move_is_down = (weed_target_mm > WEED_POS_UP_MM);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
   } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
     target_changed = true;
+    g_weed_fsm_ctx.move_is_down = (weed_target_mm > g_weed_fsm_ctx.target_active_mm);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
   }
 
   if (target_changed) {
     g_weed_fsm_ctx.pre_sent = false;
+    g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE1_SENT;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
     g_weed_fsm_ctx.move_window_start_tick = now;
     g_weed_fsm_ctx.last_pos_tx_tick = 0;
+    plan->dir_pending = false;
   }
 
   if (g_weed_fsm_ctx.move_window_start_tick != 0) {
@@ -1408,23 +1452,56 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
 
   if (!move_window_active) {
     plan->pre_pending = false;
+    plan->dir_pending = false;
     plan->pos_pending = false;
     plan->pre_sent = false;
     g_weed_fsm_ctx.pre_sent = false;
+    g_weed_fsm_ctx.seq_state = WEED_SEQ_IDLE;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
     return;
   }
 
-  if (!g_weed_fsm_ctx.pre_sent) {
-    if (!plan->pre_pending) {
-      /* One-shot pre frame is queued by pending flag and consumed by TX thread. */
+  can_send_next = (!plan->pre_pending && !plan->dir_pending && !plan->pos_pending);
+
+  switch (g_weed_fsm_ctx.seq_state) {
+  case WEED_SEQ_WAIT_PRE1_SENT:
+    if (can_send_next) {
+      /* step1: pre command */
       pack_weed_actuator_pre_cmd(plan->pre_frame);
       plan->pre_dlc = 8u;
       plan->pre_pending = true;
+      g_weed_fsm_ctx.pre_sent = true;
+      plan->pre_sent = true;
+      g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
     }
-    g_weed_fsm_ctx.pre_sent = true;
-    g_weed_fsm_ctx.pre_guard_start_tick = now;
-    plan->pre_sent = true;
+    return;
+
+  case WEED_SEQ_WAIT_DIR_SENT:
+    if (can_send_next) {
+      /* step2: direction command (per_out/per_in) */
+      pack_weed_actuator_dir_cmd(g_weed_fsm_ctx.move_is_down, plan->dir_frame);
+      plan->dir_dlc = 8u;
+      plan->dir_pending = true;
+      g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
+    }
+    return;
+
+  case WEED_SEQ_WAIT_PRE2_SENT:
+    if (can_send_next) {
+      /* step3: pre command again */
+      pack_weed_actuator_pre_cmd(plan->pre_frame);
+      plan->pre_dlc = 8u;
+      plan->pre_pending = true;
+      g_weed_fsm_ctx.pre_guard_start_tick = now;
+      g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
+    }
+    return;
+
+  case WEED_SEQ_POS_STREAM:
+    break;
+
+  case WEED_SEQ_IDLE:
+  default:
     return;
   }
 
@@ -1486,24 +1563,24 @@ static void sbus_thread_entry(void* parameter) {
 
     if (!sbus_decode_25b_to_channels(frame, &ch, &failsafe, &lost))
       continue;
-#if 1	
-				sbus_data_raw_a.CH1 = ch.CH1;
-				sbus_data_raw_a.CH2 = ch.CH2;
-				sbus_data_raw_a.CH3 = ch.CH3;
-				sbus_data_raw_a.CH4 = ch.CH4;
-				sbus_data_raw_a.CH5 = ch.CH5;
-				sbus_data_raw_a.CH6 = ch.CH6;
-				sbus_data_raw_a.CH7 = ch.CH7;
-				sbus_data_raw_a.CH8 = ch.CH8;
-				sbus_data_raw_a.CH9 = ch.CH9;
-				sbus_data_raw_a.CH10 = ch.CH10;
-				sbus_data_raw_a.CH11 = ch.CH11;
-				sbus_data_raw_a.CH12 = ch.CH12;
-				sbus_data_raw_a.CH13 = ch.CH13;
-				sbus_data_raw_a.CH14 = ch.CH14;
-				sbus_data_raw_a.CH15 = ch.CH15;
-				sbus_data_raw_a.CH16 = ch.CH16;
-				
+#if 1
+    sbus_data_raw_a.CH1 = ch.CH1;
+    sbus_data_raw_a.CH2 = ch.CH2;
+    sbus_data_raw_a.CH3 = ch.CH3;
+    sbus_data_raw_a.CH4 = ch.CH4;
+    sbus_data_raw_a.CH5 = ch.CH5;
+    sbus_data_raw_a.CH6 = ch.CH6;
+    sbus_data_raw_a.CH7 = ch.CH7;
+    sbus_data_raw_a.CH8 = ch.CH8;
+    sbus_data_raw_a.CH9 = ch.CH9;
+    sbus_data_raw_a.CH10 = ch.CH10;
+    sbus_data_raw_a.CH11 = ch.CH11;
+    sbus_data_raw_a.CH12 = ch.CH12;
+    sbus_data_raw_a.CH13 = ch.CH13;
+    sbus_data_raw_a.CH14 = ch.CH14;
+    sbus_data_raw_a.CH15 = ch.CH15;
+    sbus_data_raw_a.CH16 = ch.CH16;
+
 #endif
     rc_intent_t rc;
     memset(&rc, 0, sizeof(rc));
@@ -1852,6 +1929,7 @@ static void fsm_thread_entry(void* parameter) {
     g_latest.upper_rpm_st = out_rpm_st;
     g_latest.upper_vcu_st = out_st;
     weed_plan.pre_pending = (g_latest.weed_tx_plan.pre_pending || weed_plan.pre_pending);
+    weed_plan.dir_pending = (g_latest.weed_tx_plan.dir_pending || weed_plan.dir_pending);
     weed_plan.pos_pending = (g_latest.weed_tx_plan.pos_pending || weed_plan.pos_pending);
     g_latest.weed_tx_plan = weed_plan;
     g_latest.blade_cmd = blade_cmd;
@@ -1976,24 +2054,30 @@ static void can_tx_thread_entry(void* parameter) {
 
     uint8_t d0[8], d1[8];
     bool sent_pre = false;
+    bool sent_dir = false;
     bool sent_pos = false;
     bool sent_blade_left = false;
     bool sent_blade_right = false;
 
     /* Actuator uses pending semantics:
-     * FSM prepares event frames(pre/pos) and marks pending=true.
+     * FSM prepares event frames(pre/dir/pos) and marks pending=true.
      * TX thread consumes and clears pending only after successful send.
      */
     if (weed_plan.pre_pending) {
       sent_pre = can_hw_send_ext(CANID_WEED_ACTUATOR_TX, weed_plan.pre_frame, weed_plan.pre_dlc);
     }
+    if (weed_plan.dir_pending) {
+      sent_dir = can_hw_send_ext(CANID_WEED_ACTUATOR_TX, weed_plan.dir_frame, weed_plan.dir_dlc);
+    }
     if (weed_plan.pos_pending) {
       sent_pos = can_hw_send_ext(CANID_WEED_ACTUATOR_TX, weed_plan.pos_frame, weed_plan.pos_dlc);
     }
-    if (sent_pre || sent_pos) {
+    if (sent_pre || sent_dir || sent_pos) {
       rt_mutex_take(g_lock, RT_WAITING_FOREVER);
       if (sent_pre)
         g_latest.weed_tx_plan.pre_pending = false;
+      if (sent_dir)
+        g_latest.weed_tx_plan.dir_pending = false;
       if (sent_pos)
         g_latest.weed_tx_plan.pos_pending = false;
       rt_mutex_release(g_lock);

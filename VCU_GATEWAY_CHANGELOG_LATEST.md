@@ -268,3 +268,12 @@
     - `can_tx_thread`는 pending blade frame 소비/송신만 수행
   - actuator는 기존 pending 구조 유지
     - pre/periodic event frame를 FSM에서 생성, TX thread가 소비
+
+### 1.2 문서/헤더 동기화 (2026-04-28)
+- 대상 파일:
+  - `UPPER_VCU_STATUS_GUIDE.md`
+  - `user/vcu_gateway.h`
+- 변경 내용:
+  - P2-007(weed/blade Upper CMD/STATE) 반영 상태에 맞춰 상태 가이드 문구를 정리
+  - gateway 헤더의 상태/정의 설명을 최신 FSM/상태 보고 정책과 일치하도록 동기화
+
