@@ -31,6 +31,9 @@ extern "C" {
 
 #define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
 #define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
+//test
+//#define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
+//#define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
 #define CANID_MOTOR_STATUS_LEFT_RX    0x18FF0021u /* motor driver status left RX */
 #define CANID_MOTOR_STATUS_RIGHT_RX   0x18FF0020u /* motor driver status right RX */
 #define CANID_WEED_ACTUATOR_TX        0x18EFC800u /* weed actuator control TX */
@@ -51,9 +54,9 @@ extern "C" {
 #define WEED_CH5_RAW_UP   1712u /* weed up (home) */
 
 /* RC CH6 raw positions for blade speed stage (nearest-match mapping). */
-#define BLADE_CH6_RAW_LOW  272u
+#define BLADE_CH6_RAW_LOW  1712u
 #define BLADE_CH6_RAW_MID  992u
-#define BLADE_CH6_RAW_HIGH 1712u
+#define BLADE_CH6_RAW_HIGH 272u
 
 /* RC CH6 mapped blade rpm stage (0/250/500rpm). */
 #define BLADE_RPM_STAGE_LOW  0u
@@ -93,8 +96,8 @@ extern "C" {
 #define WEED_FSM_MODE                WEED_FSM_MODE_TIME_BASED
 
 /* TIME_BASED 모드 튜닝값 */
-#define WEED_ACT_PRE_GUARD_MS   250u  /* pre 명령 후 위치명령 시작 지연 */
-#define WEED_ACT_MOVE_WINDOW_MS 5000u /* 트리거 후 위치명령 유지 시간 */
+#define WEED_ACT_PRE_GUARD_MS   100u  /* pre 명령 후 위치명령 시작 지연 */
+#define WEED_ACT_MOVE_WINDOW_MS 7000u /* 트리거 후 위치명령 유지 시간 */
 
 /* ===================== Timeouts ===================== */
 #define UPPER_TIMEOUT_MS         500u
@@ -172,6 +175,9 @@ extern "C" {
 #define MOTOR_DRV_DEFAULT_ENABLE_BITS (D0_EN_BOTH_ENABLE | D0_AXIS1_SPEED_MODE | D0_AXIS2_SPEED_MODE)
 #define MOTOR_DRV_DEFAULT_AXIS1_ACC   (0x64u)
 #define MOTOR_DRV_DEFAULT_AXIS2_ACC   (0x64u)
+//#define MOTOR_DRV_DEFAULT_AXIS1_ACC   (0xFAu)
+//#define MOTOR_DRV_DEFAULT_AXIS2_ACC   (0xFAu)
+
 
 /* ===================== Auto Mix Select ===================== */
 /* Select AUTO_ACTIVE wheel-command generator at compile time.

@@ -1185,12 +1185,24 @@ static void pack_weed_actuator_pre_in_cmd(uint8_t out[8]) {
   memset(out, 0, 8);
   out[0] = 0x02;
   out[1] = 0xFB;
+	out[2] = 0xFB;
+	out[3] = 0xFB;
+	out[4] = 0xFB;
+	out[5] = 0xFB;
+	out[6] = 0xFF;
+	out[7] = 0xFF;
+	
 }
-
 static void pack_weed_actuator_pre_out_cmd(uint8_t out[8]) {
   memset(out, 0, 8);
-  out[0] = 0x01;
+	out[0] = 0x01;
   out[1] = 0xFB;
+	out[2] = 0xFB;
+	out[3] = 0xFB;
+	out[4] = 0xFB;
+	out[5] = 0xFB;
+	out[6] = 0xFF;
+	out[7] = 0xFF;
 }
 
 static void pack_weed_actuator_dir_cmd(bool move_down, uint8_t out[8]) {
@@ -1402,6 +1414,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   bool move_window_active = false;
   bool pre_guard_done = false;
   bool can_send_next = false;
+	bool stream_flag = false;
 
   if (!st || !ws || !plan)
     return;
@@ -1428,11 +1441,13 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
 
   if (!g_weed_fsm_ctx.target_latched) {
     target_changed = true;
+		stream_flag = false;
     g_weed_fsm_ctx.target_latched = true;
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > WEED_POS_UP_MM);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
   } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
     target_changed = true;
+		stream_flag = false;
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > g_weed_fsm_ctx.target_active_mm);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
   }
@@ -1444,6 +1459,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     g_weed_fsm_ctx.move_window_start_tick = now;
     g_weed_fsm_ctx.last_pos_tx_tick = 0;
     plan->dir_pending = false;
+		stream_flag = false;
   }
 
   if (g_weed_fsm_ctx.move_window_start_tick != 0) {
@@ -1458,6 +1474,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.seq_state = WEED_SEQ_IDLE;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
+		stream_flag = false;
     return;
   }
 
@@ -1482,7 +1499,14 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
       pack_weed_actuator_dir_cmd(g_weed_fsm_ctx.move_is_down, plan->dir_frame);
       plan->dir_dlc = 8u;
       plan->dir_pending = true;
-      g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
+      if(!stream_flag) 
+				g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
+			else
+				g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
+
+			//g_weed_fsm_ctx.pre_guard_start_tick = now;
+			//g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+    
     }
     return;
 
@@ -1498,6 +1522,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     return;
 
   case WEED_SEQ_POS_STREAM:
+		stream_flag = true;
     break;
 
   case WEED_SEQ_IDLE:
@@ -1516,6 +1541,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
     plan->pos_dlc = 8u;
     plan->pos_pending = true;
+		g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
   }
 }
 
