@@ -1326,6 +1326,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
   bool weed_pos_reached = false;
   bool pos_due;
   uint16_t weed_pos_mm = 0;
+  uint16_t target_diff_mm = 0;
 
   if (!st || !ws || !plan)
     return;
@@ -1362,7 +1363,13 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > WEED_POS_UP_MM);
     g_weed_fsm_ctx.target_latched = true;
     g_weed_fsm_ctx.pre_sent = false;
-  } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
+  } else {
+    target_diff_mm = (weed_target_mm >= g_weed_fsm_ctx.target_active_mm)
+                         ? (uint16_t)(weed_target_mm - g_weed_fsm_ctx.target_active_mm)
+                         : (uint16_t)(g_weed_fsm_ctx.target_active_mm - weed_target_mm);
+  }
+
+  if (g_weed_fsm_ctx.target_latched && (target_diff_mm >= WEED_TARGET_CHANGE_DB_MM)) {
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > g_weed_fsm_ctx.target_active_mm);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
     g_weed_fsm_ctx.pre_sent = false;
@@ -1415,6 +1422,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   bool pre_guard_done = false;
   bool can_send_next = false;
 	bool stream_flag = false;
+  uint16_t target_diff_mm = 0;
 
   if (!st || !ws || !plan)
     return;
@@ -1445,7 +1453,13 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     g_weed_fsm_ctx.target_latched = true;
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > WEED_POS_UP_MM);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
-  } else if (weed_target_mm != g_weed_fsm_ctx.target_active_mm) {
+  } else {
+    target_diff_mm = (weed_target_mm >= g_weed_fsm_ctx.target_active_mm)
+                         ? (uint16_t)(weed_target_mm - g_weed_fsm_ctx.target_active_mm)
+                         : (uint16_t)(g_weed_fsm_ctx.target_active_mm - weed_target_mm);
+  }
+
+  if (g_weed_fsm_ctx.target_latched && (target_diff_mm >= WEED_TARGET_CHANGE_DB_MM)) {
     target_changed = true;
 		stream_flag = false;
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > g_weed_fsm_ctx.target_active_mm);
