@@ -344,7 +344,7 @@ static uint16_t map_upper_blade_stage_to_rpm(uint8_t stage_or_rpm) {
     return BLADE_RPM_STAGE_MID;
   if (stage_or_rpm == UPPER_BLADE_STAGE_HIGH)
     return BLADE_RPM_STAGE_HIGH;
-  return (uint16_t)clamp_i32((int32_t)stage_or_rpm, 0, rcm_max_driver_i32());
+  return (uint16_t)clamp_i32((int32_t)stage_or_rpm, 0, BLADE_RPM_CMD_MAX);
 }
 
 static uint16_t map_ch6_to_blade_rpm(uint16_t ch6_raw) {
@@ -950,7 +950,7 @@ static void pack_motor_cmd(const motor_cmd_t* cmd, uint8_t out[8]) {
  */
 static void pack_blade_cmd_frame(bool left_side, uint16_t rpm_cmd, uint8_t out[8]) {
   motor_cmd_t blade_cmd;
-  int16_t rpm = (int16_t)clamp_i32((int32_t)rpm_cmd, 0, rcm_max_driver_i32());
+  int16_t rpm = (int16_t)clamp_i32((int32_t)rpm_cmd, 0, BLADE_RPM_CMD_MAX);
 
   memset(&blade_cmd, 0, sizeof(blade_cmd));
   blade_cmd.enable_bit = BLADE_CMD_ENABLE_BITS;

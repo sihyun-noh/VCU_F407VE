@@ -55,10 +55,12 @@ extern "C" {
 #define BLADE_CH6_RAW_MID  992u
 #define BLADE_CH6_RAW_HIGH 272u
 
-/* RC CH6 mapped blade rpm stage (0/500/1000rpm). */
+/* RC CH6 mapped blade rpm stage (0/300/2000rpm). */
 #define BLADE_RPM_STAGE_LOW  0u
 #define BLADE_RPM_STAGE_MID  300u
-#define BLADE_RPM_STAGE_HIGH 1000u
+#define BLADE_RPM_STAGE_HIGH 2000u
+/* Blade command clamp max (blade path only; independent from drive max 664). */
+#define BLADE_RPM_CMD_MAX 2000u
 
 /* Blade command constants */
 #define BLADE_CMD_ENABLE_BITS MOTOR_DRV_DEFAULT_ENABLE_BITS
