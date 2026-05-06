@@ -100,6 +100,8 @@ extern "C" {
 #define WEED_ACT_MOVE_WINDOW_MS 7000u /* 트리거 후 위치명령 유지 시간 */
 /* 목표 위치 변경 판단 deadband(mm): 미세 변동(예: 10~50mm 바운스) 무시용 */
 #define WEED_TARGET_CHANGE_DB_MM 20u
+/* 실제 위치가 목표 근처일 때 position TX를 억제하는 deadband(mm) */
+#define WEED_POS_HOLD_DB_MM 20u
 
 /* ===================== Timeouts ===================== */
 #define UPPER_TIMEOUT_MS         500u

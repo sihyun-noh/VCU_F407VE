@@ -277,3 +277,17 @@
   - P2-007(weed/blade Upper CMD/STATE) 반영 상태에 맞춰 상태 가이드 문구를 정리
   - gateway 헤더의 상태/정의 설명을 최신 FSM/상태 보고 정책과 일치하도록 동기화
 
+
+### 1.3 Weed Target 변경 Deadband 추가 (2026-05-06)
+- 대상 파일:
+  - `user/vcu_gateway.h`
+  - `user/vcu_gateway.c`
+- 변경 내용:
+  - 목표 변경 판단에 deadband 적용: `WEED_TARGET_CHANGE_DB_MM` (기본 `20mm`)
+  - 기존 `weed_target_mm != target_active_mm` 비교를 `abs diff >= deadband` 조건으로 변경
+  - 적용 경로:
+    - `weed_fsm_step_position_based()`
+    - `weed_fsm_step_time_based()`
+- 목적:
+  - 목표값 미세 변동(예: 10~50mm 바운스)으로 인한 불필요한 재트리거/시퀀스 재시작 억제
+

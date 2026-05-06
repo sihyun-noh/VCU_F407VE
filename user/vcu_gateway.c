@@ -1324,6 +1324,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
   bool run_allowed;
   bool weed_rx_fresh;
   bool weed_pos_reached = false;
+  bool weed_pos_in_hold_db = false;
   bool pos_due;
   uint16_t weed_pos_mm = 0;
   uint16_t target_diff_mm = 0;
@@ -1342,6 +1343,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
     weed_pos_mm = (uint16_t)(ws->position_x10_mm / 10u);
     diff_mm = (weed_pos_mm >= weed_target_mm) ? (weed_pos_mm - weed_target_mm) : (weed_target_mm - weed_pos_mm);
     weed_pos_reached = (diff_mm <= WEED_ACTUATOR_POS_TOL_MM);
+    weed_pos_in_hold_db = (diff_mm <= WEED_POS_HOLD_DB_MM);
   }
 
   if (!actuator_requested || !run_allowed) {
@@ -1392,7 +1394,10 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
   }
 
   pos_due = weed_period_elapsed(now, &g_weed_fsm_ctx.last_pos_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS);
-  if (pos_due && !plan->pos_pending) {
+  if (weed_pos_in_hold_db) {
+    /* 실제 위치가 목표 deadband 내면 불필요한 position TX를 억제한다. */
+    plan->pos_pending = false;
+  } else if (pos_due && !plan->pos_pending) {
     /* Keep latest periodic position frame pending until TX thread consumes it. */
     pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
     plan->pos_dlc = 8u;
@@ -1421,14 +1426,22 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   bool move_window_active = false;
   bool pre_guard_done = false;
   bool can_send_next = false;
+  bool weed_pos_in_hold_db = false;
 	bool stream_flag = false;
   uint16_t target_diff_mm = 0;
+  uint16_t weed_pos_mm = 0;
 
   if (!st || !ws || !plan)
     return;
 
   run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
   weed_rx_fresh = ws->valid && is_fresh_tick(now, ws->ts, WEED_ACTUATOR_TIMEOUT_MS);
+  if (weed_rx_fresh) {
+    uint16_t diff_mm;
+    weed_pos_mm = (uint16_t)(ws->position_x10_mm / 10u);
+    diff_mm = (weed_pos_mm >= weed_target_mm) ? (weed_pos_mm - weed_target_mm) : (weed_target_mm - weed_pos_mm);
+    weed_pos_in_hold_db = (diff_mm <= WEED_POS_HOLD_DB_MM);
+  }
   plan->target_mm = weed_target_mm;
   plan->pre_sent = g_weed_fsm_ctx.pre_sent;
   plan->rx_timeout = !weed_rx_fresh;
@@ -1549,6 +1562,12 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   }
   if (!pre_guard_done)
     return;
+
+  if (weed_pos_in_hold_db) {
+    /* 목표 근처(hold deadband)에서는 position 주기 TX를 멈춘다. */
+    plan->pos_pending = false;
+    return;
+  }
 
   if (weed_period_elapsed(now, &g_weed_fsm_ctx.last_pos_tx_tick, WEED_ACTUATOR_TX_PERIOD_MS) && !plan->pos_pending) {
     /* During move-window, periodic position frame stays pending until TX consumes it. */
