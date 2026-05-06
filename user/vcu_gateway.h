@@ -31,9 +31,6 @@ extern "C" {
 
 #define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
 #define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
-//test
-//#define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
-//#define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
 #define CANID_MOTOR_STATUS_LEFT_RX    0x18FF0021u /* motor driver status left RX */
 #define CANID_MOTOR_STATUS_RIGHT_RX   0x18FF0020u /* motor driver status right RX */
 #define CANID_WEED_ACTUATOR_TX        0x18EFC800u /* weed actuator control TX */
@@ -45,7 +42,7 @@ extern "C" {
 
 #define CAN_TX_PERIOD_MS           100u /* motor cmd + upper status, 100ms */
 #define FSM_PERIOD_MS              10u  /* arbitration tick */
-#define WEED_ACTUATOR_TX_PERIOD_MS 250u /* periodic actuator command TX */
+#define WEED_ACTUATOR_TX_PERIOD_MS 100u /* periodic actuator command TX */
 #define BLADE_TX_PERIOD_MS         250u /* blade command periodic TX */
 
 /* RC left toggle(CH5) exact raw positions (3-position switch). */
@@ -58,14 +55,14 @@ extern "C" {
 #define BLADE_CH6_RAW_MID  992u
 #define BLADE_CH6_RAW_HIGH 272u
 
-/* RC CH6 mapped blade rpm stage (0/250/500rpm). */
+/* RC CH6 mapped blade rpm stage (0/500/1000rpm). */
 #define BLADE_RPM_STAGE_LOW  0u
-#define BLADE_RPM_STAGE_MID  250u
-#define BLADE_RPM_STAGE_HIGH 500u
+#define BLADE_RPM_STAGE_MID  300u
+#define BLADE_RPM_STAGE_HIGH 1000u
 
 /* Blade command constants */
 #define BLADE_CMD_ENABLE_BITS MOTOR_DRV_DEFAULT_ENABLE_BITS
-#define BLADE_CMD_ACCEL       0x32u
+#define BLADE_CMD_ACCEL       0x64u
 
 /* CH5 mapped actuator target in mm (meaning-oriented naming). */
 #define WEED_POS_DOWN_MM 180u
@@ -96,12 +93,12 @@ extern "C" {
 #define WEED_FSM_MODE                WEED_FSM_MODE_TIME_BASED
 
 /* TIME_BASED 모드 튜닝값 */
-#define WEED_ACT_PRE_GUARD_MS   100u  /* pre 명령 후 위치명령 시작 지연 */
+#define WEED_ACT_PRE_GUARD_MS   50u  /* pre 명령 후 위치명령 시작 지연 */
 #define WEED_ACT_MOVE_WINDOW_MS 7000u /* 트리거 후 위치명령 유지 시간 */
 /* 목표 위치 변경 판단 deadband(mm): 미세 변동(예: 10~50mm 바운스) 무시용 */
 #define WEED_TARGET_CHANGE_DB_MM 20u
 /* 실제 위치가 목표 근처일 때 position TX를 억제하는 deadband(mm) */
-#define WEED_POS_HOLD_DB_MM 20u
+#define WEED_POS_HOLD_DB_MM 5u  // 50mm
 
 /* ===================== Timeouts ===================== */
 #define UPPER_TIMEOUT_MS         500u

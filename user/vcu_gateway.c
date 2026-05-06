@@ -959,10 +959,10 @@ static void pack_blade_cmd_frame(bool left_side, uint16_t rpm_cmd, uint8_t out[8
 
   if (left_side) {
     blade_cmd.rpm_axis1 = rpm;
-    blade_cmd.rpm_axis2 = 0;
+    blade_cmd.rpm_axis2 = rpm;
   } else {
     blade_cmd.rpm_axis1 = rpm;
-    blade_cmd.rpm_axis2 = rpm;
+    blade_cmd.rpm_axis2 = 0;
   }
 
   pack_motor_cmd(&blade_cmd, out);
@@ -1516,7 +1516,10 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
       plan->pre_pending = true;
       g_weed_fsm_ctx.pre_sent = true;
       plan->pre_sent = true;
-      g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+			g_weed_fsm_ctx.pre_guard_start_tick = now;
+      //g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+			g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
+    
     }
     return;
 
@@ -1574,7 +1577,8 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
     plan->pos_dlc = 8u;
     plan->pos_pending = true;
-		g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+		//g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+		g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
   }
 }
 
