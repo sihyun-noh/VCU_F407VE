@@ -56,12 +56,12 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  bool automation;               /* data[0]: upper automation gate */
-  bool upper_force_stop;         /* data[1]: E-stop */
-  bool upper_force_active;       /* data[2]: force upper mode */
-  uint8_t relay_mask;            /* data[3] */
-  uint8_t left_accel_cmd;        /* data[4]: left accel (0..255) */
-  uint8_t right_accel_cmd;       /* data[5]: right accel (0..255) */
+  bool automation;         /* data[0]: upper automation gate */
+  bool upper_force_stop;   /* data[1]: E-stop */
+  bool upper_force_active; /* data[2]: force upper mode */
+  uint8_t relay_mask;      /* data[3] */
+  uint8_t left_accel_cmd;  /* data[4]: left accel (0..255) */
+  uint8_t right_accel_cmd; /* data[5]: right accel (0..255) */
 } upper_intent_t;
 
 typedef struct {
@@ -83,19 +83,19 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  uint8_t command_type;       /* data[0]: STOP/SET_TARGET/MOVE_TO_TARGET */
-  uint8_t stage;              /* data[1]: 0 up, 1 mid, 2 down */
+  uint8_t command_type;        /* data[0]: STOP/SET_TARGET/MOVE_TO_TARGET */
+  uint8_t stage;               /* data[1]: 0 up, 1 mid, 2 down */
   uint16_t target_position_mm; /* data[2:3], uint16 BE */
-  uint8_t option;             /* data[4], reserved option */
+  uint8_t option;              /* data[4], reserved option */
 } upper_weed_cmd_t;
 
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  uint8_t command_type;  /* data[0]: STOP/SET_RPM/RUN */
-  uint8_t mode;          /* data[1]: 0 sync */
-  uint16_t left_rpm_cmd; /* data[2:3], uint16 BE */
-  uint16_t right_rpm_cmd;/* data[4:5], uint16 BE */
+  uint8_t command_type;   /* data[0]: STOP/SET_RPM/RUN */
+  uint8_t mode;           /* data[1]: 0 sync */
+  uint16_t left_rpm_cmd;  /* data[2:3], uint16 BE */
+  uint16_t right_rpm_cmd; /* data[4:5], uint16 BE */
 } upper_blade_cmd_t;
 
 typedef struct {
@@ -1264,8 +1264,8 @@ static uint8_t make_blade_meta_bits(const blade_status_t* left, const blade_stat
  * data[6]   : raw status_flags
  * data[7]   : meta_bits
  */
-static void pack_upper_weed_status(const weed_actuator_status_t* ws, uint16_t target_mm, bool command_active, bool timeout,
-                                   uint8_t out[8]) {
+static void pack_upper_weed_status(const weed_actuator_status_t* ws, uint16_t target_mm, bool command_active,
+                                   bool timeout, uint8_t out[8]) {
   uint8_t actuator_state;
   uint8_t meta_bits;
   uint16_t pos_mm = 0;
@@ -1337,24 +1337,23 @@ static void pack_weed_actuator_pre_in_cmd(uint8_t out[8]) {
   memset(out, 0, 8);
   out[0] = 0x02;
   out[1] = 0xFB;
-	out[2] = 0xFB;
-	out[3] = 0xFB;
-	out[4] = 0xFB;
-	out[5] = 0xFB;
-	out[6] = 0xFF;
-	out[7] = 0xFF;
-	
+  out[2] = 0xFB;
+  out[3] = 0xFB;
+  out[4] = 0xFB;
+  out[5] = 0xFB;
+  out[6] = 0xFF;
+  out[7] = 0xFF;
 }
 static void pack_weed_actuator_pre_out_cmd(uint8_t out[8]) {
   memset(out, 0, 8);
-	out[0] = 0x01;
+  out[0] = 0x01;
   out[1] = 0xFB;
-	out[2] = 0xFB;
-	out[3] = 0xFB;
-	out[4] = 0xFB;
-	out[5] = 0xFB;
-	out[6] = 0xFF;
-	out[7] = 0xFF;
+  out[2] = 0xFB;
+  out[3] = 0xFB;
+  out[4] = 0xFB;
+  out[5] = 0xFB;
+  out[6] = 0xFF;
+  out[7] = 0xFF;
 }
 
 static void pack_weed_actuator_dir_cmd(bool move_down, uint8_t out[8]) {
@@ -1583,7 +1582,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   bool pre_guard_done = false;
   bool can_send_next = false;
   bool weed_pos_in_hold_db = false;
-	bool stream_flag = false;
+  bool stream_flag = false;
   uint16_t target_diff_mm = 0;
   uint16_t weed_pos_mm = 0;
 
@@ -1620,7 +1619,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
 
   if (!g_weed_fsm_ctx.target_latched) {
     target_changed = true;
-		stream_flag = false;
+    stream_flag = false;
     g_weed_fsm_ctx.target_latched = true;
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > WEED_POS_UP_MM);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
@@ -1632,7 +1631,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
 
   if (g_weed_fsm_ctx.target_latched && (target_diff_mm >= WEED_TARGET_CHANGE_DB_MM)) {
     target_changed = true;
-		stream_flag = false;
+    stream_flag = false;
     g_weed_fsm_ctx.move_is_down = (weed_target_mm > g_weed_fsm_ctx.target_active_mm);
     g_weed_fsm_ctx.target_active_mm = weed_target_mm;
   }
@@ -1644,7 +1643,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     g_weed_fsm_ctx.move_window_start_tick = now;
     g_weed_fsm_ctx.last_pos_tx_tick = 0;
     plan->dir_pending = false;
-		stream_flag = false;
+    stream_flag = false;
   }
 
   if (g_weed_fsm_ctx.move_window_start_tick != 0) {
@@ -1660,7 +1659,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.seq_state = WEED_SEQ_IDLE;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
-		stream_flag = false;
+    stream_flag = false;
     return;
   }
 
@@ -1675,10 +1674,9 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
       plan->pre_pending = true;
       g_weed_fsm_ctx.pre_sent = true;
       plan->pre_sent = true;
-			g_weed_fsm_ctx.pre_guard_start_tick = now;
-      //g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
-			g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
-    
+      g_weed_fsm_ctx.pre_guard_start_tick = now;
+      // g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+      g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
     }
     return;
 
@@ -1688,14 +1686,13 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
       pack_weed_actuator_dir_cmd(g_weed_fsm_ctx.move_is_down, plan->dir_frame);
       plan->dir_dlc = 8u;
       plan->dir_pending = true;
-      if(!stream_flag) 
-				g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
-			else
-				g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
+      if (!stream_flag)
+        g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
+      else
+        g_weed_fsm_ctx.seq_state = WEED_SEQ_POS_STREAM;
 
-			//g_weed_fsm_ctx.pre_guard_start_tick = now;
-			//g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
-    
+      // g_weed_fsm_ctx.pre_guard_start_tick = now;
+      // g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
     }
     return;
 
@@ -1710,13 +1707,10 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     }
     return;
 
-  case WEED_SEQ_POS_STREAM:
-		stream_flag = true;
-    break;
+  case WEED_SEQ_POS_STREAM: stream_flag = true; break;
 
   case WEED_SEQ_IDLE:
-  default:
-    return;
+  default: return;
   }
 
   if (g_weed_fsm_ctx.pre_guard_start_tick != 0) {
@@ -1736,8 +1730,8 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     pack_weed_actuator_pos_cmd(weed_target_mm, plan->pos_frame);
     plan->pos_dlc = 8u;
     plan->pos_pending = true;
-		//g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
-		g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
+    // g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_DIR_SENT;
+    g_weed_fsm_ctx.seq_state = WEED_SEQ_WAIT_PRE2_SENT;
   }
 }
 
@@ -1969,9 +1963,14 @@ static void fsm_thread_entry(void* parameter) {
     bool force_upper = (upper.upper_force_active == 1);
     bool upper_auto_ready =
         is_upper_auto_handover_ready(rc_active, rc.rc_remote_automation, upper_cfg_valid, (upper.automation == 1));
+    /* Work-tool source policy:
+     * - RC mode uses RC switch values directly.
+     * - Auto mode starts from safe defaults, then applies only valid Upper CMDs.
+     *   This prevents stale RC actuator/blade values from carrying into Auto.
+     */
     bool weed_upper_active = upper_auto_ready;
-    uint16_t upper_weed_target_mm = rc.weed_target_mm;
-    uint16_t upper_blade_rpm_cmd = rc.blade_rpm_cmd;
+    uint16_t upper_weed_target_mm = WEED_POS_UP_MM;
+    uint16_t upper_blade_rpm_cmd = 0u;
     bool upper_weed_cmd_active = select_upper_weed_target(&upper_weed, &upper_weed_target_mm);
     bool upper_blade_cmd_active = select_upper_blade_rpm(&upper_blade, &upper_blade_rpm_cmd);
     bool weed_cmd_active = weed_upper_active ? upper_weed_cmd_active : rc_active;
@@ -2048,18 +2047,17 @@ static void fsm_thread_entry(void* parameter) {
           (motor_left_st.valid && motor_left_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
       if (out_st.stop_reason == FSM_STOP_TIMEOUT)
         out_st.timeout_detail_code = TO_MOTOR_LEFT;
-    } /* else if (!motor_right_ok) {
-       out_cmd_left.src = FSM_CTRL_SRC_STOP;
-       out_cmd_left.type = CMD_STOP;
-       out_cmd_right.src = FSM_CTRL_SRC_STOP;
-       out_cmd_right.type = CMD_STOP;
-       out_st.control_src = FSM_CTRL_SRC_STOP;
-       out_st.stop_reason =
-           (motor_right_st.valid && motor_right_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
-       if (out_st.stop_reason == FSM_STOP_TIMEOUT)
-         out_st.timeout_detail_code = TO_MOTOR_RIGHT;
-     }*/
-    else {
+    } else if (!motor_right_ok) {
+      out_cmd_left.src = FSM_CTRL_SRC_STOP;
+      out_cmd_left.type = CMD_STOP;
+      out_cmd_right.src = FSM_CTRL_SRC_STOP;
+      out_cmd_right.type = CMD_STOP;
+      out_st.control_src = FSM_CTRL_SRC_STOP;
+      out_st.stop_reason =
+          (motor_right_st.valid && motor_right_st.fault_bits != 0) ? FSM_STOP_MOTOR_FAULT : FSM_STOP_TIMEOUT;
+      if (out_st.stop_reason == FSM_STOP_TIMEOUT)
+        out_st.timeout_detail_code = TO_MOTOR_RIGHT;
+    } else {
       /* Not STOP:
        * Priority policy:
        * 1) force_upper -> Upper auto-cmd path (override)
