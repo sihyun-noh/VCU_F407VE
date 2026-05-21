@@ -20,14 +20,16 @@ extern "C" {
 /* ===================== CAN IDs / Periods ===================== */
 #define CANID_UPPER_STATUS_RPM_TX     0x18FF0300u /* upper feedback: motor driver status */
 #define CANID_UPPER_STATUS_TX         0x18FF0310u /* upper feedback: vcu gateway status */
-#define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF0320u /* upper feedback: vehicle motion status */
-#define CANID_UPPER_VEHICLE_MON_TX    0x18FF0330u /* upper feedback: vehicle monitor/debug status */
-#define CANID_UPPER_WEED_STATUS_TX    0x18FF0340u /* upper feedback: weed actuator status */
-#define CANID_UPPER_BLADE_STATUS_TX   0x18FF0350u /* upper feedback: blade status */
+#define CANID_UPPER_WEED_STATUS_TX    0x18FF0320u /* upper feedback: weed actuator status */
+#define CANID_UPPER_BLADE_STATUS_TX   0x18FF0330u /* upper feedback: blade status */
+#define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF4000u /* upper monitor/test: vehicle motion status */
+#define CANID_UPPER_VEHICLE_MON_TX    0x18FF4010u /* upper monitor/test: vehicle debug status */
 
-#define CANID_UPPER_CMD_DRIVE_RX 0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
-#define CANID_UPPER_CMD_RX       0x18FF0210u /* TODO: set to real upper->gateway cmd ID */
-#define CANID_UPPER_CMD_AUTO_RX  0x18FF0220u /* upper->gateway auto cmd ID (linear speed + yaw rate) */
+#define CANID_UPPER_CMD_DRIVE_RX  0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
+#define CANID_UPPER_CMD_CONFIG_RX 0x18FF0210u /* upper->gateway config cmd ID */
+#define CANID_UPPER_CMD_AUTO_RX   0x18FF0220u /* upper->gateway auto cmd ID (linear speed + yaw rate) */
+#define CANID_UPPER_CMD_WEED_RX   0x18FF0230u /* upper->gateway weed actuator cmd ID */
+#define CANID_UPPER_CMD_BLADE_RX  0x18FF0240u /* upper->gateway weed blade cmd ID */
 
 #define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
 #define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
@@ -40,7 +42,8 @@ extern "C" {
 #define CANID_BLADE_LEFT_RX           0x18FF0032u /* left blade status RX */
 #define CANID_BLADE_RIGHT_RX          0x18FF0030u /* right blade status RX */
 
-#define CAN_TX_PERIOD_MS           100u /* motor cmd + upper status, 100ms */
+#define CAN_TX_PERIOD_MS           100u /* control TX base period: motor cmd + pending consumers */
+#define UPPER_STATUS_TX_PERIOD_MS  200u /* gateway->upper status/report frames */
 #define FSM_PERIOD_MS              10u  /* arbitration tick */
 #define WEED_ACTUATOR_TX_PERIOD_MS 100u /* periodic actuator command TX */
 #define BLADE_TX_PERIOD_MS         250u /* blade command periodic TX */
@@ -71,11 +74,22 @@ extern "C" {
 #define WEED_POS_MID_MM  90u
 #define WEED_POS_UP_MM   0u
 
-/* Upper weed stage encoding (for 0x18FF0210 data[1]/data[2]) */
+/* Upper weed actuator command_type (0x18FF0230 data[0]) */
+#define UPPER_WEED_CMD_STOP           0u
+#define UPPER_WEED_CMD_SET_TARGET     1u
+#define UPPER_WEED_CMD_MOVE_TO_TARGET 2u
+
+/* Upper weed stage encoding (0x18FF0230 data[1]) */
 #define UPPER_WEED_STAGE_UP   0u
 #define UPPER_WEED_STAGE_MID  1u
 #define UPPER_WEED_STAGE_DOWN 2u
 
+/* Upper blade command_type (0x18FF0240 data[0]) */
+#define UPPER_BLADE_CMD_STOP    0u
+#define UPPER_BLADE_CMD_SET_RPM 1u
+#define UPPER_BLADE_CMD_RUN     2u
+
+/* Upper blade stage encoding (legacy/test convenience only). */
 #define UPPER_BLADE_STAGE_STOP 0u
 #define UPPER_BLADE_STAGE_MID  1u
 #define UPPER_BLADE_STAGE_HIGH 2u

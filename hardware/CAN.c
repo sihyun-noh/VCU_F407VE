@@ -254,6 +254,49 @@ void Init_CAN1_Filter_AGMO(void) {
   CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;
   CAN_FilterInit(&CAN_FilterInitStructure);
   
+
+  // upper auto cmd RX
+  uint32_t id_8 = (0x18ff0220 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+
+  CAN_FilterInitStructure.CAN_FilterNumber = 7;
+  CAN_FilterInitStructure.CAN_FilterIdHigh = (id_8 >> 16) & 0xffff;
+  CAN_FilterInitStructure.CAN_FilterIdLow = (id_8)&0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdHigh = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdLow = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdMask;
+  CAN_FilterInitStructure.CAN_FilterScale = CAN_FilterScale_32bit;
+  CAN_FilterInitStructure.CAN_FilterFIFOAssignment = CAN_Filter_FIFO0;
+  CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;
+  CAN_FilterInit(&CAN_FilterInitStructure);
+
+  // upper weed actuator cmd RX
+  uint32_t id_9 = (0x18ff0230 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+
+  CAN_FilterInitStructure.CAN_FilterNumber = 8;
+  CAN_FilterInitStructure.CAN_FilterIdHigh = (id_9 >> 16) & 0xffff;
+  CAN_FilterInitStructure.CAN_FilterIdLow = (id_9)&0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdHigh = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdLow = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdMask;
+  CAN_FilterInitStructure.CAN_FilterScale = CAN_FilterScale_32bit;
+  CAN_FilterInitStructure.CAN_FilterFIFOAssignment = CAN_Filter_FIFO0;
+  CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;
+  CAN_FilterInit(&CAN_FilterInitStructure);
+
+  // upper blade cmd RX
+  uint32_t id_10 = (0x18ff0240 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+
+  CAN_FilterInitStructure.CAN_FilterNumber = 9;
+  CAN_FilterInitStructure.CAN_FilterIdHigh = (id_10 >> 16) & 0xffff;
+  CAN_FilterInitStructure.CAN_FilterIdLow = (id_10)&0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdHigh = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdLow = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdMask;
+  CAN_FilterInitStructure.CAN_FilterScale = CAN_FilterScale_32bit;
+  CAN_FilterInitStructure.CAN_FilterFIFOAssignment = CAN_Filter_FIFO0;
+  CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;
+  CAN_FilterInit(&CAN_FilterInitStructure);
+
   CAN_ITConfig(CAN1, CAN_IT_FMP0, ENABLE); 
 }
 
