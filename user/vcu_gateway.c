@@ -143,6 +143,7 @@ typedef struct {
   uint16_t target_mm;
   bool pre_sent;
   bool rx_timeout;
+  bool command_active;
 } weed_tx_plan_t;
 
 typedef enum {
@@ -165,7 +166,9 @@ typedef struct {
 } weed_fsm_ctx_t;
 
 typedef struct {
-  uint16_t rpm_cmd; /* stage command from RC mapping: 0/250/500 */
+  uint16_t rpm_cmd;           /* actual blade TX rpm command */
+  uint16_t requested_rpm_cmd; /* selected rpm before run/stop gating */
+  bool command_active;        /* true when blade run command is currently active */
 } blade_cmd_t;
 
 typedef struct {
@@ -324,6 +327,10 @@ static inline int16_t clamp_to_i16(int32_t v) {
 
 static inline uint8_t clamp_u16_to_u8(uint16_t v) {
   return (uint8_t)((v > 255u) ? 255u : v);
+}
+
+static inline uint16_t abs_diff_u16(uint16_t a, uint16_t b) {
+  return (a >= b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
 }
 
 static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
@@ -1137,95 +1144,183 @@ static void pack_upper_vehicle_monitor(const rc_intent_t* rc, const motor_cmd_t*
   pack_int16_hi_lo(center_dist_cm, &out[6], &out[7]);
 }
 
+static uint8_t make_actuator_state(const weed_actuator_status_t* ws, uint16_t target_mm, bool command_active,
+                                   bool timeout) {
+  uint16_t actual_mm;
+  uint16_t diff_mm;
+
+  if (!ws || !ws->valid)
+    return ACT_STATE_UNKNOWN;
+  if (timeout)
+    return ACT_STATE_TIMEOUT;
+  if (ws->error_code != 0u)
+    return ACT_STATE_FAULT;
+
+  actual_mm = ws->position_x10_mm / WEED_ACT_POS_SCALE_X10;
+  diff_mm = abs_diff_u16(actual_mm, target_mm);
+
+  if (!command_active) {
+    if (actual_mm <= WEED_ACTUATOR_POS_TOL_MM)
+      return ACT_STATE_HOME;
+    return ACT_STATE_STOPPED;
+  }
+
+  if (diff_mm <= WEED_ACTUATOR_POS_TOL_MM)
+    return ACT_STATE_TARGET_REACHED;
+
+  if (target_mm > actual_mm)
+    return ACT_STATE_MOVING_DOWN;
+  if (target_mm < actual_mm)
+    return ACT_STATE_MOVING_UP;
+
+  return ACT_STATE_POSITION_MISMATCH;
+}
+
+static uint8_t make_actuator_meta_bits(const weed_actuator_status_t* ws, uint8_t actuator_state, bool command_active,
+                                       bool timeout) {
+  uint8_t meta = 0u;
+
+  if (!ws)
+    return 0u;
+
+  if (ws->valid)
+    meta |= ACT_META_VALID;
+  if (ws->valid && !timeout)
+    meta |= ACT_META_FRESH;
+  if (timeout)
+    meta |= ACT_META_TIMEOUT;
+  if (actuator_state == ACT_STATE_MOVING_DOWN || actuator_state == ACT_STATE_MOVING_UP)
+    meta |= ACT_META_MOVING;
+  if (actuator_state == ACT_STATE_TARGET_REACHED || actuator_state == ACT_STATE_HOME)
+    meta |= ACT_META_TARGET_REACHED;
+  if (command_active)
+    meta |= ACT_META_COMMAND_ACTIVE;
+  if (ws->error_code != 0u || actuator_state == ACT_STATE_FAULT)
+    meta |= ACT_META_FAULT;
+
+  return meta;
+}
+
+static uint8_t make_blade_fault_summary(const blade_status_t* left, const blade_status_t* right) {
+  uint8_t fault = 0u;
+
+  if (left && left->fault_bits != 0u)
+    fault |= BLADE_FAULT_LEFT;
+  if (right && right->fault_bits != 0u)
+    fault |= BLADE_FAULT_RIGHT;
+  if (fault != 0u)
+    fault |= BLADE_FAULT_ANY;
+
+  return fault;
+}
+
+static uint8_t make_blade_state(const blade_status_t* left, const blade_status_t* right, const blade_cmd_t* cmd,
+                                uint8_t fault_summary, rt_tick_t now) {
+  bool left_valid = (left && left->valid);
+  bool right_valid = (right && right->valid);
+  bool left_fresh = left_valid && is_fresh_tick(now, left->ts, MOTOR_TIMEOUT_MS);
+  bool right_fresh = right_valid && is_fresh_tick(now, right->ts, MOTOR_TIMEOUT_MS);
+
+  if (!left_valid && !right_valid)
+    return BLADE_STATE_UNKNOWN;
+  if (!left_fresh || !right_fresh)
+    return BLADE_STATE_TIMEOUT;
+  if (fault_summary != 0u)
+    return BLADE_STATE_FAULT;
+  if (cmd && cmd->command_active)
+    return BLADE_STATE_RUNNING;
+  if (cmd && cmd->requested_rpm_cmd > 0u)
+    return BLADE_STATE_SET_RPM_ONLY;
+  return BLADE_STATE_STOPPED;
+}
+
+static uint8_t make_blade_meta_bits(const blade_status_t* left, const blade_status_t* right, const blade_cmd_t* cmd,
+                                    uint8_t fault_summary, rt_tick_t now) {
+  uint8_t meta = 0u;
+  bool left_fresh = (left && left->valid && is_fresh_tick(now, left->ts, MOTOR_TIMEOUT_MS));
+  bool right_fresh = (right && right->valid && is_fresh_tick(now, right->ts, MOTOR_TIMEOUT_MS));
+
+  if (left && left->valid)
+    meta |= BLADE_META_LEFT_VALID;
+  if (left_fresh)
+    meta |= BLADE_META_LEFT_FRESH;
+  if (right && right->valid)
+    meta |= BLADE_META_RIGHT_VALID;
+  if (right_fresh)
+    meta |= BLADE_META_RIGHT_FRESH;
+  if (cmd && cmd->command_active)
+    meta |= BLADE_META_RUNNING | BLADE_META_COMMAND_ACTIVE;
+  if (fault_summary != 0u)
+    meta |= BLADE_META_FAULT;
+
+  return meta;
+}
+
 /* Upper weed status TX 0x18FF0320
- * data[0] : status_flags
- * data[1] : error_code
- * data[2] : current_raw
- * data[3] : input_state
- * data[4] : meta bits (bit0 valid, bit1 timeout, bit2 pre_sent)
- * data[5] : target_mm (0..255)
- * data[6] : actual_pos_mm (0..255)
- * data[7] : speed_mm_s (0..255)
+ * data[0]   : actuator_state
+ * data[1]   : error_code
+ * data[2:3] : target_position_mm (uint16 BE)
+ * data[4:5] : actual_position_mm (uint16 BE)
+ * data[6]   : raw status_flags
+ * data[7]   : meta_bits
  */
-static void pack_upper_weed_status(const weed_actuator_status_t* ws, uint16_t target_mm, bool pre_sent, bool timeout,
+static void pack_upper_weed_status(const weed_actuator_status_t* ws, uint16_t target_mm, bool command_active, bool timeout,
                                    uint8_t out[8]) {
-  uint8_t meta = 0;
+  uint8_t actuator_state;
+  uint8_t meta_bits;
   uint16_t pos_mm = 0;
-  uint16_t speed_mm_s = 0;
 
   memset(out, 0, 8);
   if (!ws)
     return;
 
-  pos_mm = ws->position_x10_mm / 10u;
-  speed_mm_s = ws->speed_x10_mm_s / 10u;
+  pos_mm = ws->position_x10_mm / WEED_ACT_POS_SCALE_X10;
+  actuator_state = make_actuator_state(ws, target_mm, command_active, timeout);
+  meta_bits = make_actuator_meta_bits(ws, actuator_state, command_active, timeout);
 
-  if (ws->valid)
-    meta |= (1u << 0);
-  if (timeout)
-    meta |= (1u << 1);
-  if (pre_sent)
-    meta |= (1u << 2);
-
-  out[0] = ws->status_flags;
+  out[0] = actuator_state;
   out[1] = ws->error_code;
-  out[2] = ws->current_raw;
-  out[3] = ws->input_state;
-  out[4] = meta;
-  out[5] = clamp_u16_to_u8(target_mm);
-  out[6] = clamp_u16_to_u8(pos_mm);
-  out[7] = clamp_u16_to_u8(speed_mm_s);
+  out[2] = (uint8_t)((target_mm >> 8) & 0xFFu);
+  out[3] = (uint8_t)(target_mm & 0xFFu);
+  out[4] = (uint8_t)((pos_mm >> 8) & 0xFFu);
+  out[5] = (uint8_t)(pos_mm & 0xFFu);
+  out[6] = ws->status_flags;
+  out[7] = meta_bits;
 }
 
 /* Upper blade status TX 0x18FF0330
- * data[0] : blade left fault_bits
- * data[1] : blade right fault_bits
- * data[2] : blade cmd rpm (0..255, saturated)
- * data[3] : control source bitmask (bit0 RC, bit1 UPPER_AUTO, bit2 STOP)
- * data[4] : blade left rpm_axis1 / 10 (int8)
- * data[5] : blade right rpm_axis1 / 10 (int8)
- * data[6] : blade left valid/fresh (bit0 valid, bit1 fresh)
- * data[7] : blade right valid/fresh (bit0 valid, bit1 fresh)
+ * data[0]   : blade_state
+ * data[1]   : fault_summary
+ * data[2:3] : left_feedback_rpm (int16 BE)
+ * data[4:5] : right_feedback_rpm (int16 BE)
+ * data[6]   : cmd_rpm_scaled (rpm / 10)
+ * data[7]   : meta_bits
  */
 static void pack_upper_blade_status(const blade_status_t* left, const blade_status_t* right, const blade_cmd_t* cmd,
                                     const upper_status_t* st, rt_tick_t now, uint8_t out[8]) {
-  int32_t left_rpm_x10 = 0;
-  int32_t right_rpm_x10 = 0;
-  uint8_t src_mask = 0u;
-  uint8_t left_meta = 0u;
-  uint8_t right_meta = 0u;
+  uint8_t fault_summary;
+  uint8_t blade_state;
+  uint8_t meta_bits;
+  int16_t left_rpm = 0;
+  int16_t right_rpm = 0;
 
   memset(out, 0, 8);
   if (!left || !right || !cmd || !st)
     return;
 
-  if (st->control_src == FSM_CTRL_SRC_RC)
-    src_mask |= (1u << 0);
-  if (st->control_src == FSM_CTRL_SRC_UPPER_AUTO)
-    src_mask |= (1u << 1);
-  if (st->control_src == FSM_CTRL_SRC_STOP)
-    src_mask |= (1u << 2);
+  (void)st;
+  fault_summary = make_blade_fault_summary(left, right);
+  blade_state = make_blade_state(left, right, cmd, fault_summary, now);
+  meta_bits = make_blade_meta_bits(left, right, cmd, fault_summary, now);
+  left_rpm = left->rpm_axis1;
+  right_rpm = right->rpm_axis1;
 
-  if (left->valid)
-    left_meta |= (1u << 0);
-  if (right->valid)
-    right_meta |= (1u << 0);
-  if (left->valid && is_fresh_tick(now, left->ts, MOTOR_TIMEOUT_MS))
-    left_meta |= (1u << 1);
-  if (right->valid && is_fresh_tick(now, right->ts, MOTOR_TIMEOUT_MS))
-    right_meta |= (1u << 1);
-
-  left_rpm_x10 = clamp_i32((int32_t)left->rpm_axis1 / 10, -127, 127);
-  right_rpm_x10 = clamp_i32((int32_t)right->rpm_axis1 / 10, -127, 127);
-
-  out[0] = left->fault_bits;
-  out[1] = right->fault_bits;
-  out[2] = clamp_u16_to_u8(cmd->rpm_cmd);
-  out[3] = src_mask;
-  out[4] = (uint8_t)((int8_t)left_rpm_x10);
-  out[5] = (uint8_t)((int8_t)right_rpm_x10);
-  out[6] = left_meta;
-  out[7] = right_meta;
+  out[0] = blade_state;
+  out[1] = fault_summary;
+  pack_int16_hi_lo(left_rpm, &out[2], &out[3]);
+  pack_int16_hi_lo(right_rpm, &out[4], &out[5]);
+  out[6] = clamp_u16_to_u8(cmd->rpm_cmd / 10u);
+  out[7] = meta_bits;
 }
 
 /* Weed actuator pre-command (1-shot before position control start).
@@ -1326,7 +1421,9 @@ static void blade_cmd_step(bool cmd_active, uint16_t blade_rpm_cmd, const upper_
 
   run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
 
-  out->rpm_cmd = (cmd_active && run_allowed) ? blade_rpm_cmd : 0u;
+  out->requested_rpm_cmd = blade_rpm_cmd;
+  out->command_active = (cmd_active && run_allowed);
+  out->rpm_cmd = out->command_active ? blade_rpm_cmd : 0u;
 }
 
 /* Build blade TX pending plan in FSM, TX thread only sends pending frames.
@@ -1394,6 +1491,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
   plan->target_mm = weed_target_mm;
   plan->pre_sent = g_weed_fsm_ctx.pre_sent;
   plan->rx_timeout = !weed_rx_fresh;
+  plan->command_active = (actuator_requested && run_allowed);
 
   if (weed_rx_fresh) {
     uint16_t diff_mm;
@@ -1414,6 +1512,7 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
     plan->dir_pending = false;
     plan->pos_pending = false;
     plan->pre_sent = false;
+    plan->command_active = false;
     return;
   }
 
@@ -1502,6 +1601,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   plan->target_mm = weed_target_mm;
   plan->pre_sent = g_weed_fsm_ctx.pre_sent;
   plan->rx_timeout = !weed_rx_fresh;
+  plan->command_active = (actuator_requested && run_allowed);
 
   if (!actuator_requested || !run_allowed) {
     g_weed_fsm_ctx.pre_sent = false;
@@ -1514,6 +1614,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     plan->dir_pending = false;
     plan->pos_pending = false;
     plan->pre_sent = false;
+    plan->command_active = false;
     return;
   }
 
@@ -1555,6 +1656,7 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
     plan->dir_pending = false;
     plan->pos_pending = false;
     plan->pre_sent = false;
+    plan->command_active = false;
     g_weed_fsm_ctx.pre_sent = false;
     g_weed_fsm_ctx.seq_state = WEED_SEQ_IDLE;
     g_weed_fsm_ctx.pre_guard_start_tick = 0;
@@ -2297,7 +2399,7 @@ static void can_tx_thread_entry(void* parameter) {
       (void)can_hw_send_ext(CANID_UPPER_STATUS_RPM_TX, d1, 8);
 
       /* send weed actuator status to upper */
-      pack_upper_weed_status(&weed_st, weed_plan.target_mm, weed_plan.pre_sent, weed_plan.rx_timeout, d1);
+      pack_upper_weed_status(&weed_st, weed_plan.target_mm, weed_plan.command_active, weed_plan.rx_timeout, d1);
       (void)can_hw_send_ext(CANID_UPPER_WEED_STATUS_TX, d1, 8);
 
       /* send blade status to upper */

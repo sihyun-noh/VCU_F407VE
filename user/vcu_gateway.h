@@ -124,6 +124,49 @@ extern "C" {
 #define WEED_ACTUATOR_TIMEOUT_MS 500u
 #define WEED_ACTUATOR_POS_TOL_MM 3u
 
+/* ===================== Upper Weed/Blade Status Enums ===================== */
+/* 0x18FF0320 data[0]: VCU-interpreted actuator summary state. */
+#define ACT_STATE_UNKNOWN           0u
+#define ACT_STATE_HOME              1u
+#define ACT_STATE_MOVING_DOWN       2u
+#define ACT_STATE_TARGET_REACHED    3u
+#define ACT_STATE_MOVING_UP         4u
+#define ACT_STATE_POSITION_MISMATCH 5u
+#define ACT_STATE_STOPPED           6u
+#define ACT_STATE_FAULT             7u
+#define ACT_STATE_TIMEOUT           8u
+
+/* 0x18FF0320 data[7]: actuator meta bit mask. */
+#define ACT_META_VALID          (1u << 0)
+#define ACT_META_FRESH          (1u << 1)
+#define ACT_META_TIMEOUT        (1u << 2)
+#define ACT_META_MOVING         (1u << 3)
+#define ACT_META_TARGET_REACHED (1u << 4)
+#define ACT_META_COMMAND_ACTIVE (1u << 5)
+#define ACT_META_FAULT          (1u << 6)
+
+/* 0x18FF0330 data[0]: VCU-interpreted blade summary state. */
+#define BLADE_STATE_UNKNOWN      0u
+#define BLADE_STATE_STOPPED      1u
+#define BLADE_STATE_RUNNING      2u
+#define BLADE_STATE_SET_RPM_ONLY 3u
+#define BLADE_STATE_FAULT        4u
+#define BLADE_STATE_TIMEOUT      5u
+
+/* 0x18FF0330 data[1]: blade fault summary bit mask. */
+#define BLADE_FAULT_LEFT  (1u << 0)
+#define BLADE_FAULT_RIGHT (1u << 1)
+#define BLADE_FAULT_ANY   (1u << 2)
+
+/* 0x18FF0330 data[7]: blade meta bit mask. */
+#define BLADE_META_LEFT_VALID     (1u << 0)
+#define BLADE_META_LEFT_FRESH     (1u << 1)
+#define BLADE_META_RIGHT_VALID    (1u << 2)
+#define BLADE_META_RIGHT_FRESH    (1u << 3)
+#define BLADE_META_RUNNING        (1u << 4)
+#define BLADE_META_COMMAND_ACTIVE (1u << 5)
+#define BLADE_META_FAULT          (1u << 6)
+
 /* ===================== Status Bit Fields ===================== */
 /* Timeout detail code for 0x18FF0310 data[7] */
 #define TO_NONE        (0u)
