@@ -239,15 +239,6 @@ extern "C" {
 //#define MOTOR_DRV_DEFAULT_AXIS2_ACC   (0xFAu)
 
 
-/* ===================== Auto Mix Select ===================== */
-/* Select AUTO_ACTIVE wheel-command generator at compile time.
- * - UPPER_AUTO_MIX_MODE_KINEMATIC: use mix_upper_auto_cmd_to_tracks(v, yaw_rate)
- * - UPPER_AUTO_MIX_MODE_RC_MIXER:  convert (v, yaw_rate) -> pseudo(throttle, steering) -> mix_rc_to_tracks
- */
-#define UPPER_AUTO_MIX_MODE_KINEMATIC (0u)
-#define UPPER_AUTO_MIX_MODE_RC_MIXER  (1u)
-#define UPPER_AUTO_MIX_MODE           UPPER_AUTO_MIX_MODE_KINEMATIC
-
 /* ===================== Public Types ===================== */
 /* Control source selected by FSM arbitration. */
 typedef enum {
