@@ -1985,6 +1985,7 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.src = FSM_CTRL_SRC_UPPER_AUTO;
 
         if (!upper_drive_ok) {
+				//if (upper_drive_ok) {
           out_cmd_left.type = CMD_STOP;
           out_cmd_left.rpm_axis1 = 0;
           out_cmd_left.rpm_axis2 = 0;
