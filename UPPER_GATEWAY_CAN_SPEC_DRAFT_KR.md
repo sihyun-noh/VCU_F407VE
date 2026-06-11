@@ -1,268 +1,452 @@
-# Upper <-> Gateway CAN 인터페이스 초안 (한글)
+---
+document_type: can_interface_spec
+project_name: AGMO 한국 쓰리축
+topic: Upper Controller CAN Interface Spec
+status: Draft
+updated: 2026-05-22
+release_version: AGMO-VCU-CAN-2026.05.22-DRAFT
+owner: VCU Gateway
+---
 
-## 1. 범위
-- 본 문서는 `user/vcu_gateway.c`, `user/vcu_gateway.h`의 현재 구현 기준입니다.
-- 대상:
-  - `Upper -> Gateway` 명령 수신
-  - `Gateway -> Upper` 상태 송신
-- 모든 프레임은 Extended ID, DLC 8 기준입니다.
+# Upper Controller CAN Interface Spec
 
-## 2. 통신 개요
-- CAN 통신 속도: `500 kbps` (500k bps)
-- TX 주기 스레드: `100 ms` (`CAN_TX_PERIOD_MS`)
-- FSM 갱신 주기: `10 ms` (`FSM_PERIOD_MS`)
-- RX 처리: CAN RX 큐 이벤트 기반
-- 멀티바이트 정수 바이트 순서: **big-endian** (`MSB 먼저`, `LSB 다음`)
+> 대상: Upper Controller 개발팀
+> 범위: Upper Controller <-> VCU Gateway CAN 통신 명세
+> 기준 코드: `user/vcu_gateway.c`, `user/vcu_gateway.h`
+> 상태: 현재 코드 기준 Draft
 
-정규화 스케일(통합):
-- 입력 스케일(RC, Upper drive cmd): `RCM_MAX_RC_INPUT` (현재 `±500`)
-- 드라이버 출력 스케일: `RCM_MAX_DRIVER_INPUT` (현재 `±664`, 최대속도 모델 `5 km/h` 기준)
+> 릴리즈 버전: `AGMO-VCU-CAN-2026.05.22-DRAFT`
+> 릴리즈 기준일: 2026-05-22
+> 전달 목적: 상위제어기 개발팀 구현/검증용 CAN 인터페이스 기준 문서
 
-## 3. CAN ID 요약
+## 1. Common Rules
 
-| 방향 | ExtID | 주기 | 용도 |
-|---|---:|---:|---|
-| Upper -> Gateway | `0x18FF0200` | Event | 주행 명령(throttle/steering + 런타임 제한값) |
-| Upper -> Gateway | `0x18FF0210` | Event | 설정/보조 명령 |
-| Upper -> Gateway | `0x18FF0220` | Event | 자동주행 명령(linear speed/yaw rate) |
-| Gateway -> Upper | `0x18FF0300` | 100 ms | 모터 드라이버 RPM 피드백 |
-| Gateway -> Upper | `0x18FF0310` | 100 ms | Gateway/RC/FSM 상태 |
-| Gateway -> Upper | `0x18FF0320` | 100 ms | 차량 운동 상태 |
-| Gateway -> Upper | `0x18FF0330` | 100 ms | 차량 모니터/디버그 |
-| Gateway -> Upper | `0x18FF0340` | 100 ms | weed actuator 상태 |
-| Gateway -> Upper | `0x18FF0350` | 100 ms | blade 상태 |
-| Weed actuator -> Gateway | `0x18FF00C8` | 100 ms | weed actuator 피드백 |
-| Blade -> Gateway | `0x18FF0032` | 100 ms | blade left 상태 피드백 |
-| Blade -> Gateway | `0x18FF0030` | 100 ms | blade right 상태 피드백 |
+| 항목 | 값 |
+| ---- | -- |
+| CAN speed | 500 kbps |
+| CAN frame | Extended ID |
+| DLC | 기본 8 bytes |
+| Multi-byte endian | Big-endian, MSB first |
+| signed 값 | two's complement |
+| Gateway status period | 200ms |
+| Drive CMD period | 200ms 권장, timeout 발생 시 STOP |
 
-## 4. Upper -> Gateway (CMD RX)
+Endian 예시:
 
-### 4.1 `0x18FF0200` Drive Command
-- Decoder: `decode_upper_drive_cmd()`
-- 타입: 신호별 signed `int16` / big-endian
-- `throttle_cmd`, `steering_cmd`는 코드에서 `±RCM_MAX_RC_INPUT`(현재 `±500`)으로 clamp
+| 값      | 타입        | Hex byte |
+| ------ | --------- | -------- |
+| `+50`  | int16 BE  | `00 32`  |
+| `-50`  | int16 BE  | `FF CE`  |
+| `300`  | uint16 BE | `01 2C`  |
+| `500`  | uint16 BE | `01 F4`  |
+| `1500` | uint16 BE | `05 DC`  |
 
-| Byte | 신호 | 타입 | 설명 |
-|---|---|---|---|
-| 0:1 | `throttle_cmd` | `int16` | 전/후진 명령 |
-| 2:3 | `steering_cmd` | `int16` | 좌/우 조향 명령 |
-| 4:5 | `max_driver_input_cmd` | `uint16` | Upper 믹서 런타임 최대 출력 |
-| 6:7 | `max_speed_kmh_x100` | `uint16` | Upper 믹서 런타임 최대 속도 (`km/h * 100`) |
+## 2. CAN ID Summary
 
-적용 규칙:
-- `max_driver_input_cmd > 0`이면 `vehicle_config.max_driver_input`으로 적용
-- `max_speed_kmh_x100 > 0`이면 `vehicle_config.max_speed_kmh = max_speed_kmh_x100 / 100.0` 적용
-- 값이 `0`이면 기본 컴파일 상수 유지(`RCM_MAX_DRIVER_INPUT`, `RCM_MAX_SPEED_KMH`)
-- 인코딩 주의: 속도는 `km/h * 100`으로 전송
-  - 예: `5 km/h`는 `500`으로 전송
-- 적용 범위 주의:
-  - 위 runtime limit(`data[4:7]`)은 **Upper 제어 경로에서만** 적용
-  - RC 제어 경로는 기본값(`g_rcm_vehicle`) 사용
+### 2-1. Upper -> Gateway RX
 
-### 4.2 `0x18FF0210` Config/Aux Command
-- Decoder: `decode_upper_cmd()`
-- 참고 (현재 FSM 정책):
-  - config timeout은 hard stop 조건으로 사용하지 않음
-  - config 적용 유효성은 `upper.valid` 기준
+| CAN ID       | Name              | Period  | DLC | 설명                                        |
+| ------------ | ----------------- | ------- | --- | -------------------------------------------------- |
+| `0x18FF0200` | Drive CMD         | 200ms   | 8   | 상위 주행 명령, 현재 Auto 주행 기본 명령                         |
+| `0x18FF0210` | Config CMD        | 변경 시 1회 | 8   | automation, force stop, force active, relay, accel, drive cmd select |
+| `0x18FF0220` | Auto Direct Drive CMD | 선택 시 200ms 권장 | 8   | 좌/우 driver 직접 입력, mixer bypass |
+| `0x18FF0230` | Weed Actuator CMD | 이벤트성    | 8   | actuator 목표 위치 설정/이동/정지                            |
+| `0x18FF0240` | Weed Blade CMD    | 이벤트성    | 8   | blade RPM 설정/RUN/STOP                              |
 
-| Byte | 신호 | 타입 | 설명 |
-|---|---|---|---|
-| 0 | `automation` | `bool (bit0)` | automation 신호 (RC remote automation과 함께 릴레이 동작에 사용) |
-| 1 | `weed_target` | `uint8` | weed target stage(0=UP,1=MID,2=DOWN) 또는 direct mm(0..200) |
-| 2 | `blade_cmd` | `uint8` | blade stage(0=STOP,1=MID,2=HIGH) 또는 direct rpm(0..max) |
-| 3 | `upper_force_stop` | `bool (bit0)` | E-stop 요청 |
-| 4 | `upper_force_active` | `bool (bit0)` | Upper 강제 선택 플래그 |
-| 5 | `relay_mask` | `uint8` | 릴레이 마스크 |
-| 6 | `left_accel_cmd` | `uint8` | 좌측 accel (0..255) |
-| 7 | `right_accel_cmd` | `uint8` | 우측 accel (0..255) |
+### 2-2. Gateway -> Upper TX
 
-모터 드라이버 설정 적용 규칙:
-- `enable_bit`는 항상 기본값 고정
-  - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
-- Upper는 `driver_config_bitmask`로 override 하지 않음
-- accel은 `upper.valid`일 때 적용
-  - 좌측: `data[6]` -> left axis1/axis2 accel
-  - 우측: `data[7]` -> right axis1/axis2 accel
-- `upper.valid`가 아니면 기본 accel 사용
-  - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
-  - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
+| CAN ID | Name | Period | DLC | 설명 |
+| ------ | ---- | ------ | --- | ----------- |
+| `0x18FF0300` | Motor Status RPM | 200ms | 8 | 모터 드라이버 RPM 피드백 |
+| `0x18FF0310` | Gateway Status | 200ms | 8 | VCU/RC/FSM/timeout 상태 |
+| `0x18FF0320` | Weed Actuator Status | 200ms | 8 | actuator 상태/위치/error |
+| `0x18FF0330` | Weed Blade Status | 200ms | 8 | blade 상태/fault/RPM |
+| `0x18FF4000` | Vehicle Motion | 200ms | 8 | 차량 motion monitor, test/debug |
+| `0x18FF4010` | Vehicle Monitor | 200ms | 8 | mixer/debug monitor, test/debug |
 
-## 5. Gateway -> Upper (STATUS TX)
+## 3. Upper -> Gateway RX Detail
 
-### 5.1 `0x18FF0300` 모터 드라이버 피드백
-- Packer: `pack_upper_status_rpm()`
+## 3-1. `0x18FF0200` Drive CMD
 
-| Byte | 신호 | 타입 | 범위/비고 |
-|---|---|---|---|
-| 0:1 | `driver_left_axis1_rpm` | `int16` | `±664` (`±RCM_MAX_DRIVER_INPUT`) clamp |
-| 2:3 | `driver_left_axis2_rpm` | `int16` | `±664` clamp |
-| 4:5 | `driver_right_axis1_rpm` | `int16` | `±664` clamp |
-| 6:7 | `driver_right_axis2_rpm` | `int16` | `±664` clamp |
+현재 자동주행 주행 명령은 이 CAN ID를 기준으로 동작한다. Upper automation 상태에서 이 메시지가 timeout되면 VCU는 상위 주행 명령을 신뢰하지 않고 STOP 처리한다.
 
-### 5.2 `0x18FF0310` Gateway 상태
-- Packer: `pack_upper_status()`
+| Byte | Name | Type | Endian | 단위/범위 | 설명 |
+| ---- | ---- | ---- | ------ | ---------- | ----------- |
+| data[0:1] | `throttle_cmd` | int16 | BE | -500 ~ 500 | 전진/후진 정규화 명령 |
+| data[2:3] | `steering_cmd` | int16 | BE | -500 ~ 500 | 좌/우 조향 정규화 명령 |
+| data[4:5] | `max_driver_input_cmd` | uint16 | BE | 0 ~ 2000 권장 | 정규화 500일 때 driver 입력 기준값 |
+| data[6:7] | `max_speed_kmh_x100` | uint16 | BE | km/h x 100 | 정규화 500일 때 기준 최고 속도 |
 
-| Byte | 신호 | 타입 | 설명 |
-|---|---|---|---|
-| 0:1 | `power_supply_value` | `int16` | 현재 left motor `supply_volt`, `±664` clamp |
-| 2 | `md_left_fault_msg` | `uint8` | Driver1 fault |
-| 3 | `md_right_fault_msg` | `uint8` | Driver2 fault |
-| 4 | `rc_status_mask` | `uint8` | RC 상태 비트마스크 |
-| 5 | `fsm_status_mask` | `uint8` | FSM 상태 비트마스크 |
-| 6 | `relay_st` | `uint8` | 릴레이 상태 |
-| 7 | `timeout_detail_code` | `uint8` | timeout 원인 상세 코드 |
+정규화 의미:
 
-RC status bitmask (`data[4]`):
-- bit0: `RC_ST_ENABLE` (조종기 B 버튼)
-- bit1: `RC_ST_EMERGENCY_STOP` (조종기 A 버튼, E-STOP)
-- bit2: `RC_ST_FAILSAFE` (조종기 신호 끊김)
-- bit3: `RC_ST_FRESH` (실시간 수신 상태, 실패 시 timeout 상태)
-- bit4: `RC_ST_CULTIVATOR_DOWN` (좌 토글, 작업기 하강)
-- bit5: `RC_ST_CULTIVATOR_ON` (우 토글, 제초기 ON)
-- bit6: `RC_ST_REMOTE_AUTOMATION` (조종기 D 버튼, remote automation)
-- bit7: `RC_ST_DRIVE_MODE` (조종기 C 버튼, 주행 모드: `0=agile`, `1=stable`)
+```text
+driver_input = max_driver_input_cmd * (throttle_cmd / 500)
+estimated_speed_kmh = (max_speed_kmh_x100 / 100.0) * (throttle_cmd / 500)
+```
 
-주의 (`rc.valid` vs `rc.failsafe`):
-- `rc.valid`와 `rc.failsafe`는 서로 다른 의미입니다.
-- `rc.failsafe`는 SBUS 수신 데이터가 전달하는 RC 연결 상태(disconnect/connect) 신호입니다.
-- 따라서 `rc.valid`만으로 failsafe를 판단하면 안 됩니다.
+주의:
 
-FSM status bitmask (`data[5]`):
-- bit0: `FSM_ST_MODE_SAFE_STOP`
-- bit1: `FSM_ST_MODE_MANUAL_RC`
-- bit2: `FSM_ST_MODE_AUTO_ARMED`
-- bit3: `FSM_ST_MODE_AUTO_ACTIVE`
-- bit4: `FSM_ST_STOP_UPPER_FORCE`
-- bit5: `FSM_ST_STOP_RC_EMG`
-- bit6: `FSM_ST_STOP_MOTOR_FAULT`
-- bit7: `FSM_ST_STOP_TIMEOUT`
+- `max_speed_kmh_x100`는 `km/h x 100`이다.
+- 3.00km/h는 `300`을 전송한다. `3`을 전송하면 0.03km/h로 해석된다.
+- 5.00km/h는 `500`을 전송한다.
 
-비트 발생 조건:
-- 모드 비트(bit0~bit3)는 one-hot으로 사용
-- `bit0 SAFE_STOP`: STOP 경로이거나 stop reason 존재
-- `bit1 MANUAL_RC`: RC 주행 모드(`rc_ok && rc_enable`), 자동전환 비활성
-- `bit2 AUTO_ARMED`: RC 자동화 요청은 있으나 Upper 자동전환 미성립
-- `bit3 AUTO_ACTIVE`: Upper 제어 경로 활성(강제 Upper 또는 자동전환 성립)
-- `bit4 UPPER_FORCE`: stop reason이 upper force stop
-- `bit5 RC_EMG`: stop reason이 RC 비상정지
-- `bit6 MOTOR_FAULT`: stop reason이 모터 fault
-- `bit7 TIMEOUT`: stop reason이 timeout
+예시, 3.00km/h 기준에서 전진 50%, 직진:
 
-timeout detail code (`data[7]`):
-- `0`: `TO_NONE`
-- `1`: `TO_RC`
-- `2`: `TO_UPPER_CFG` (예약값, 현재 FSM hard timeout 경로에서는 미사용)
-- `3`: `TO_UPPER_DRIVE`
-- `4`: `TO_MOTOR_LEFT`
-- `5`: `TO_MOTOR_RIGHT`
-- `6`: `TO_MULTIPLE`
+| 항목 | 10진수 | Hex |
+| ----- | ------- | --- |
+| `throttle_cmd` | `250` | `00 FA` |
+| `steering_cmd` | `0` | `00 00` |
+| `max_driver_input_cmd` | `396` | `01 8C` |
+| `max_speed_kmh_x100` | `300` | `01 2C` |
 
-### 5.3 `0x18FF0320` 차량 운동 상태
-- Packer: `pack_upper_vehicle_status()`
+Payload:
 
-| Byte | 신호 | 타입 | 스케일 |
-|---|---|---|---|
-| 0:1 | `yaw_deg_0_360_x10` | `int16` | deg * 10 |
-| 2:3 | `yaw_rate_deg_s_x10` | `int16` | deg/s * 10 |
-| 4:5 | `left_speed_m_s_x100` | `int16` | m/s * 100 |
-| 6:7 | `right_speed_m_s_x100` | `int16` | m/s * 100 |
+```text
+00 FA 00 00 01 8C 01 2C
+```
 
-### 5.4 `0x18FF0330` 차량 모니터/디버그
-- Packer: `pack_upper_vehicle_monitor()`
+결과 의미:
 
-| Byte | 신호 | 타입 | 스케일 |
-|---|---|---|---|
-| 0 | `throttle_percent` | `int8` | -100..100 |
-| 1 | `steering_percent` | `int8` | -100..100 |
-| 2 | `left_cmd_percent` | `int8` | -100..100 |
-| 3 | `right_cmd_percent` | `int8` | -100..100 |
-| 4:5 | `yaw_rate_deg_s_x10` | `int16` | IMU gyro Z deg/s * 10 (없으면 명령기반 yaw rate) |
-| 6:7 | `center_distance_m_x100` | `int16` | m * 100 |
+```text
+실제 driver 입력 = 396 * (250 / 500) = 198
+예상 속도 = 3.00km/h * (250 / 500) = 1.50km/h
+```
 
-### 5.5 `0x18FF0340` Weed Actuator 상태
-- Packer: `pack_upper_weed_status()`
+## 3-2. `0x18FF0210` Config CMD
 
-| Byte | 신호 | 타입 | 설명 |
-|---|---|---|---|
-| 0 | `status_flags` | `uint8` | actuator 상태 플래그 (`0x18FF00C8 data[3]`) |
-| 1 | `error_code` | `uint8` | actuator 에러 코드 (`0x18FF00C8 data[4]`) |
-| 2 | `current_raw` | `uint8` | 전류 raw (`0.25A/bit`) |
-| 3 | `input_state` | `uint8` | 입력 상태 |
-| 4 | `meta_bits` | `uint8` | bit0 valid, bit1 timeout, bit2 pre_sent |
-| 5 | `target_mm` | `uint8` | 목표 위치(mm, 0..255 clamp) |
-| 6 | `actual_pos_mm` | `uint8` | 실제 위치(mm, 0..255 clamp) |
-| 7 | `speed_mm_s` | `uint8` | 속도(mm/s, 0..255 clamp) |
+공통 config 명령이다. actuator/blade 직접 명령은 포함하지 않는다. actuator는 `0x18FF0230`, blade는 `0x18FF0240`을 사용한다.
 
+| Byte | Name | Type | Endian | 단위/범위 | 설명 |
+| ---- | ---- | ---- | ------ | ---------- | ----------- |
+| data[0] | `automation` | uint8 | - | bit0 | Upper automation 요청 |
+| data[1] | `upper_force_stop` | uint8 | - | bit0 | 전체 강제 정지 |
+| data[2] | `upper_force_active` | uint8 | - | bit0 | Upper 강제 제어 요청 |
+| data[3] | `relay_mask` | uint8 | - | bit mask | relay 명령 |
+| data[4] | `left_accel_cmd` | uint8 | - | 0 ~ 255 | left motor 가속도 설정값 |
+| data[5] | `right_accel_cmd` | uint8 | - | 0 ~ 255 | right motor 가속도 설정값 |
+| data[6] | `upper_drive_cmd_select` | uint8 | - | bit0 | `0`=`0x18FF0200` 사용, `1`=`0x18FF0220` 사용 |
+| data[7] | Reserved | uint8 | - | - | 0 권장 |
 
-### 5.6 `0x18FF0350` Blade 상태
-- Packer: `pack_upper_blade_status()`
+예시, automation ON, accel 100:
 
-| Byte | 신호 | 타입 | 설명 |
-|---|---|---|---|
-| 0 | `left_fault_bits` | `uint8` | blade left fault |
-| 1 | `right_fault_bits` | `uint8` | blade right fault |
-| 2 | `blade_cmd_rpm` | `uint8` | 현재 blade command rpm(0..255 clamp) |
-| 3 | `src_mask` | `uint8` | bit0 RC, bit1 UPPER_AUTO, bit2 STOP |
-| 4 | `left_rpm_axis1_div10` | `int8` | left rpm axis1 / 10 |
-| 5 | `right_rpm_axis1_div10` | `int8` | right rpm axis1 / 10 |
-| 6 | `left_meta` | `uint8` | bit0 valid, bit1 fresh |
-| 7 | `right_meta` | `uint8` | bit0 valid, bit1 fresh |
+```text
+01 00 00 00 64 64 00 00
+```
 
-### 5.7 `0x18FF00C8` Weed Actuator 피드백 RX
-- Decoder: `decode_weed_actuator_status()`
-- position/speed는 디바이스 포맷 기준 little-endian
+정책:
 
-| Byte | 신호 | 타입 | 설명 |
-|---|---|---|---|
-| 0:1 | `position_x10_mm` | `uint16 (LE)` | 위치(0.1mm) |
-| 2 | `current_raw` | `uint8` | 전류 raw (`0.25A/bit`) |
-| 3 | `status_flags` | `uint8` | 상태 플래그 |
-| 4 | `error_code` | `uint8` | 에러 코드 |
-| 5:6 | `speed_x10_mm_s` | `uint16 (LE)` | 속도(0.1mm/s) |
-| 7 | `input_state` | `uint8` | 입력 상태 |
+- Config CMD는 변경 시 1회 전송 성격이다.
+- 현재 VCU FSM은 config timeout을 hard gate로 사용하지 않는다.
+- 자동주행 진입은 RC remote automation ON과 Upper automation ON이 함께 필요하다.
+- `data[6] bit0`은 Upper 주행 명령 경로를 선택한다. 기본 `0`은 기존 `0x18FF0200`, set `1`은 `0x18FF0220` direct 명령을 사용한다.
 
-## 6. 제어 우선순위 (현재 코드)
-- STOP 우선순위:
-  1. `upper_force_stop`
-  2. RC emergency stop
-  3. motor fault/timeout
-- STOP이 아니면:
-  - `upper_force_active=true`면 Upper 강제 선택
-  - 아니면 `rc_ok && rc_enable && rc_remote_automation && upper.valid && upper.automation`이면 Upper 자동전환
-  - 아니면 RC 유효+enable이면 RC 선택(기본 우선순위)
-  - 아니면 timeout stop
-- weed actuator 판단은 FSM(`weed_fsm_step`)에서 수행하고, `can_tx_thread`는 pending 프레임 전송만 수행
-- blade 경로는 FSM의 `blade_fsm_step()`에서 처리
-  - `blade_cmd_step()`에서 목표 rpm 결정
-  - `blade_tx_plan_step()`에서 RC B 버튼(`rc_enable`) ON일 때만 250ms 주기 pending 프레임 생성
-  - `can_tx_thread`는 blade pending 프레임 소비/송신만 수행
-- 타임아웃 상수:
-  - `UPPER_DRIVE_TIMEOUT_MS = 1000`
-  - `MOTOR_TIMEOUT_MS = 500`
-  - `SBUS_TIMEOUT_MS = 1000`
+## 3-3. `0x18FF0220` Auto Direct Drive CMD
 
-FSM 동작 전 신뢰성 확인(핵심):
-- FSM은 수신 데이터의 `valid + freshness`를 먼저 확인한 뒤 제어 로직을 수행합니다.
-- RC(SBUS), Upper(CAN), Motor status(CAN) 중 필요한 신뢰성 조건이 깨지면 제어를 유지하지 않고 STOP 경로로 전환합니다.
-- 즉, 이 모듈은 \"값이 들어왔다\"만으로 동작하지 않고, \"최신/유효한 값\"인지 확인한 뒤 동작합니다.
+`0x18FF0210 data[6] bit0`이 `1`일 때 사용하는 좌/우 driver 직접 입력 명령이다. VCU mixer를 bypass하지만, 실제 설치 방향 부호는 VCU가 적용한다.
 
-체크 기준 요약:
-- RC: `rc.valid && fresh(SBUS_TIMEOUT_MS)`
-- Upper config: `upper.valid` (freshness timeout은 hard stop gate로 미사용)
-- Upper drive: `upper_drive.valid && fresh(UPPER_DRIVE_TIMEOUT_MS)`
-- Motor left/right: `valid && fresh(MOTOR_TIMEOUT_MS) && fault_bits==0`
+| Byte | Name | Type | Endian | 단위/범위 | 설명 |
+| ---- | ---- | ---- | ------ | ---------- | ----------- |
+| data[0:1] | `left_driver_input_cmd` | int16 | BE | -2000 ~ 2000 권장 | 논리 좌측 driver 직접 입력 |
+| data[2:3] | `right_driver_input_cmd` | int16 | BE | -2000 ~ 2000 권장 | 논리 우측 driver 직접 입력 |
+| data[4:5] | `max_driver_input_cmd` | uint16 | BE | 0 ~ 2000 권장 | clamp 기준값, `0`이면 VCU 기본값 사용 |
+| data[6:7] | `max_speed_kmh_x100` | uint16 | BE | km/h x 100 | monitor/reference 기준 속도, 예: 300 = 3.00km/h |
 
-Driver OK 조건(명령 유지 전제):
-- `motor_left_ok = motor_left.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`
-- `motor_right_ok = motor_right.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`
-- 좌/우 중 하나라도 Driver OK가 아니면 FSM은 STOP 경로로 전환되며(`FSM_STOP_MOTOR_FAULT` 또는 `FSM_STOP_TIMEOUT`), 정상 주행 명령을 유지하지 않습니다.
+주의:
 
-### 6.1 Timeout 관련 주의
-- Timeout 판정은 freshness(`valid` + 마지막 수신시각) 기반입니다.
-- CAN 메시지가 주기적으로 수신되지 않으면 timeout 동작이 의도대로 보장되지 않습니다.
+- `data[6] bit0=0`이면 FSM은 기존 `0x18FF0200 Drive CMD`를 사용한다.
+- `data[6] bit0=1`이면 FSM은 `0x18FF0220` freshness를 확인하고, timeout 시 STOP 처리한다.
 
-## 7. 참고 파일
-- `user/vcu_gateway.h`
-- `user/vcu_gateway.c`
-- `user/rc_mixer.h`
-- `user/rc_mixer.c`
+## 3-4. `0x18FF0230` Weed Actuator CMD
+
+actuator 목표 위치 설정, 이동 요청, 정지를 담당한다.
+
+| Byte      | Name                 | Type   | Endian | 단위/범위 | 설명                                  |
+| --------- | -------------------- | ------ | ------ | ---------- | -------------------------------------------- |
+| data[0]   | `command_type`       | uint8  | -      | enum       | `0=STOP`, `1=SET_TARGET`, `2=MOVE_TO_TARGET` |
+| data[1]   | `stage`              | uint8  | -      | enum       | `0=UP`, `1=MID`, `2=DOWN`                    |
+| data[2:3] | `target_position_mm` | uint16 | BE     | 0 ~ 200mm  | actuator 목표 위치                               |
+| data[4]   | `option`             | uint8  | -      | reserved   | 0 권장                                         |
+| data[5:7] | Reserved             | -      | -      | -          | 0 권장                                         |
+
+Command type:
+
+| 값 | Name | 의미 |
+| ----- | ---- | ------- |
+| `0` | `STOP` | actuator 동작 정지 또는 요청 해제 |
+| `1` | `SET_TARGET` | 목표 위치 저장, 즉시 이동하지 않음 |
+| `2` | `MOVE_TO_TARGET` | 목표 위치로 이동 요청 |
+
+Stage:
+
+| Value | Name | Position |
+| ----- | ---- | -------- |
+| `0` | `UP` | 0mm |
+| `1` | `MID` | 90mm |
+| `2` | `DOWN` | 180mm |
+
+예시, 180mm로 이동 요청:
+
+```text
+02 02 00 B4 00 00 00 00
+```
+
+예시, 90mm 목표만 저장:
+
+```text
+01 01 00 5A 00 00 00 00
+```
+
+현재 코드 수신 경로:
+
+```text
+decode_upper_weed_actuator_cmd() -> g_latest.upper_cmd_weed -> FSM 선택 로직
+```
+
+## 3-5. `0x18FF0240` Weed Blade CMD
+
+blade RPM 설정, RUN, STOP을 담당한다.
+
+| Byte | Name | Type | Endian | 단위/범위 | 설명 |
+| ---- | ---- | ---- | ------ | ---------- | ----------- |
+| data[0] | `command_type` | uint8 | - | enum | `0=STOP`, `1=SET_RPM`, `2=RUN` |
+| data[1] | `mode` | uint8 | - | enum | `0=SYNC`, 추후 확장 |
+| data[2:3] | `left_blade_rpm` | uint16 | BE | 0 ~ 2000rpm | left blade 목표 rpm |
+| data[4:5] | `right_blade_rpm` | uint16 | BE | 0 ~ 2000rpm | right blade 목표 rpm |
+| data[6:7] | Reserved | - | - | - | 0 권장 |
+
+Command type:
+
+| 값 | Name | 의미 |
+| ----- | ---- | ------- |
+| `0` | `STOP` | blade 정지 |
+| `1` | `SET_RPM` | 목표 RPM 저장, 즉시 RUN 아님 |
+| `2` | `RUN` | 목표 RPM으로 blade ON |
+
+예시, 좌/우 1500rpm RUN:
+
+```text
+02 00 05 DC 05 DC 00 00
+```
+
+예시, 좌/우 1500rpm 설정만 저장:
+
+```text
+01 00 05 DC 05 DC 00 00
+```
+
+예시, blade STOP:
+
+```text
+00 00 00 00 00 00 00 00
+```
+
+현재 코드 수신 경로:
+
+```text
+decode_upper_blade_cmd() -> g_latest.upper_cmd_blade -> FSM 선택 로직
+```
+
+## 4. Gateway -> Upper TX Detail
+
+## 4-1. `0x18FF0300` Motor Status RPM
+
+| Byte | Name | Type | Endian | 단위 | 설명 |
+| ---- | ---- | ---- | ------ | ---- | ----------- |
+| data[0:1] | `driver_left_axis1_rpm` | int16 | BE | rpm/driver feedback | left driver axis1 피드백 |
+| data[2:3] | `driver_left_axis2_rpm` | int16 | BE | rpm/driver feedback | left driver axis2 피드백 |
+| data[4:5] | `driver_right_axis1_rpm` | int16 | BE | rpm/driver feedback | right driver axis1 피드백 |
+| data[6:7] | `driver_right_axis2_rpm` | int16 | BE | rpm/driver feedback | right driver axis2 피드백 |
+
+## 4-2. `0x18FF0310` Gateway Status
+
+| Byte | Name | Type | Endian | 설명 |
+| ---- | ---- | ---- | ------ | ----------- |
+| data[0:1] | `power_supply_value` | int16 | BE | 전원 전압/전원 상태값 |
+| data[2] | `md_left_fault_msg` | uint8 | - | left motor driver fault code |
+| data[3] | `md_right_fault_msg` | uint8 | - | right motor driver fault code |
+| data[4] | `rc_status_mask` | uint8 | - | RC 상태 bit mask |
+| data[5] | `fsm_status_mask` | uint8 | - | FSM 상태 bit mask |
+| data[6] | `relay_st` | uint8 | - | relay 상태 bit mask |
+| data[7] | `timeout_detail_code` | uint8 | - | timeout 상세 코드 |
+
+RC status mask, data[4]:
+
+| Bit  | Define                    | 의미                                       |
+| ---- | ------------------------- | --------------------------------------------- |
+| bit0 | `RC_ST_ENABLE`            | RC B 버튼 enable 상태                            |
+| bit1 | `RC_ST_EMERGENCY_STOP`    | RC A 버튼 비상정지 상태                            |
+| bit2 | `RC_ST_FAILSAFE`          | RC receiver failsafe, 조종기 신호 disconnect 상태    |
+| bit3 | `RC_ST_FRESH`             | RC 데이터가 실시간으로 갱신 중인지 표시, clear이면 timeout 가능         |
+| bit4 | `RC_ST_CULTIVATOR_DOWN`   | 작업기 다운, 왼쪽 토글                                 |
+| bit5 | `RC_ST_CULTIVATOR_ON`     | 제초모터 ON, 오른쪽 토글                               |
+| bit6 | `RC_ST_REMOTE_AUTOMATION` | RC D 버튼 remote automation 상태                 |
+| bit7 | `RC_ST_DRIVE_MODE`        | RC C 버튼 주행 모드, `0=민첩형`, `1=안정형` |
+
+FSM status mask, data[5]:
+
+| Bit  | Define                    | 의미              |
+| ---- | ------------------------- | -------------------- |
+| bit0 | `FSM_ST_MODE_SAFE_STOP`   | 안전 정지 상태       |
+| bit1 | `FSM_ST_MODE_MANUAL_RC`   | RC 수동 제어 상태       |
+| bit2 | `FSM_ST_MODE_AUTO_ARMED`  | 자동모드 진입 준비 상태      |
+| bit3 | `FSM_ST_MODE_AUTO_ACTIVE` | 상위제어기 명령으로 실제 자동주행 제어 중인 상태     |
+| bit4 | `FSM_ST_STOP_UPPER_FORCE` | 상위제어기 강제 정지 발생  |
+| bit5 | `FSM_ST_STOP_RC_EMG`      | RC 비상정지 발생 |
+| bit6 | `FSM_ST_STOP_MOTOR_FAULT` | 모터 fault 발생       |
+| bit7 | `FSM_ST_STOP_TIMEOUT`     | timeout으로 정지 발생      |
+
+Timeout detail code, data[7]:
+
+| 값 | Define | 의미 |
+| ----- | ------ | ------- |
+| `0` | `TO_NONE` | timeout 없음 |
+| `1` | `TO_RC` | RC timeout |
+| `2` | `TO_UPPER_CFG` | upper config timeout, 현재 hard gate로 사용하지 않음 |
+| `3` | `TO_UPPER_DRIVE` | 상위제어기 주행 명령 timeout |
+| `4` | `TO_MOTOR_LEFT` | left motor 피드백 timeout |
+| `5` | `TO_MOTOR_RIGHT` | right motor 피드백 timeout |
+| `6` | `TO_MULTIPLE` | 복수 timeout |
+| `7` | `TO_UPPER_AUTO` | 선택된 `0x18FF0220` auto direct 명령 timeout |
+
+## 4-3. `0x18FF0320` Weed Actuator Status
+
+| Byte | Name | Type | Endian | 단위 | 설명 |
+| ---- | ---- | ---- | ------ | ---- | ----------- |
+| data[0] | `actuator_state` | uint8 | - | enum | VCU가 해석한 actuator 요약 상태 |
+| data[1] | `error_code` | uint8 | - | code | actuator 원본 error code |
+| data[2:3] | `target_position_mm` | uint16 | BE | mm | VCU가 현재 목표로 잡은 위치 |
+| data[4:5] | `actual_position_mm` | uint16 | BE | mm | actuator 피드백 위치 |
+| data[6] | `status_flags` | uint8 | - | bit mask | actuator 원본 status flags |
+| data[7] | `meta_bits` | uint8 | - | bit mask | VCU가 해석한 상태 메타 정보 |
+
+Actuator state:
+
+| 값 | Name | 의미 |
+| ----- | ---- | ------- |
+| `0` | `UNKNOWN` | 상태 판단 불가 |
+| `1` | `HOME` | 원위치, 0mm 근처 |
+| `2` | `MOVING_DOWN` | 목표가 현재보다 크고 이동 중 |
+| `3` | `TARGET_REACHED` | 목표 위치 도달 |
+| `4` | `MOVING_UP` | 목표가 현재보다 작고 이동 중 |
+| `5` | `POSITION_MISMATCH` | 목표와 실제 위치 차이 큼 |
+| `6` | `STOPPED` | 정지 또는 동작 요청 없음 |
+| `7` | `FAULT` | error code 존재 |
+| `8` | `TIMEOUT` | actuator status timeout 발생 |
+
+Actuator meta bits, data[7]:
+
+| Bit | Define | 의미 |
+| --- | ------ | ------- |
+| bit0 | `ACT_META_VALID` | status를 한 번 이상 수신 |
+| bit1 | `ACT_META_FRESH` | status가 최근 수신됨 |
+| bit2 | `ACT_META_TIMEOUT` | status timeout 발생 |
+| bit3 | `ACT_META_MOVING` | 이동 중 |
+| bit4 | `ACT_META_TARGET_REACHED` | 목표 위치 도달 |
+| bit5 | `ACT_META_COMMAND_ACTIVE` | actuator 명령 활성 상태 |
+| bit6 | `ACT_META_FAULT` | fault 존재 |
+| bit7 | Reserved | 0 |
+
+## 4-4. `0x18FF0330` Weed Blade Status
+
+| Byte      | Name                 | Type  | Endian | 단위     | 설명                         |
+| --------- | -------------------- | ----- | ------ | -------- | ----------------------------------- |
+| data[0]   | `blade_state`        | uint8 | -      | enum     | VCU가 해석한 blade 요약 상태 |
+| data[1]   | `fault_summary`      | uint8 | -      | bit mask | 좌/우 blade fault 요약      |
+| data[2:3] | `left_feedback_rpm`  | int16 | BE     | rpm      | left blade 피드백 rpm             |
+| data[4:5] | `right_feedback_rpm` | int16 | BE     | rpm      | right blade 피드백 rpm            |
+| data[6]   | `cmd_rpm_scaled`     | uint8 | -      | rpm / 10 | 현재 명령 rpm 축약값          |
+| data[7]   | `meta_bits`          | uint8 | -      | bit mask | VCU가 해석한 상태 메타 정보            |
+
+Blade state:
+
+| 값 | Name | 의미 |
+| ----- | ---- | ------- |
+| `0` | `UNKNOWN` | 상태 판단 불가 |
+| `1` | `STOPPED` | blade 정지 |
+| `2` | `RUNNING` | blade RUN 명령 활성 |
+| `3` | `SET_RPM_ONLY` | 목표 RPM 저장, RUN 아님 |
+| `4` | `FAULT` | 좌/우 blade fault 존재 |
+| `5` | `TIMEOUT` | 좌/우 blade status timeout 발생 |
+
+Fault summary, data[1]:
+
+| Bit | Define | 의미 |
+| --- | ------ | ------- |
+| bit0 | `BLADE_FAULT_LEFT` | left blade fault 존재 |
+| bit1 | `BLADE_FAULT_RIGHT` | right blade fault 존재 |
+| bit2 | `BLADE_FAULT_ANY` | 좌/우 중 하나라도 blade fault 존재 |
+| bit3~7 | Reserved | 0 |
+
+Blade meta bits, data[7]:
+
+| Bit | Define | 의미 |
+| --- | ------ | ------- |
+| bit0 | `BLADE_META_LEFT_VALID` | left status를 한 번 이상 수신 |
+| bit1 | `BLADE_META_LEFT_FRESH` | left status가 최근 수신됨 |
+| bit2 | `BLADE_META_RIGHT_VALID` | right status를 한 번 이상 수신 |
+| bit3 | `BLADE_META_RIGHT_FRESH` | right status가 최근 수신됨 |
+| bit4 | `BLADE_META_RUNNING` | RUN 상태 |
+| bit5 | `BLADE_META_COMMAND_ACTIVE` | blade 명령 활성 상태 |
+| bit6 | `BLADE_META_FAULT` | fault 존재 |
+| bit7 | Reserved | 0 |
+
+예시, 좌/우 1500rpm RUN 정상:
+
+```text
+02 00 05 DC 05 DC 96 3F
+```
+
+## 5. Control Policy
+
+## 5-1. Manual RC / Auto Handover
+
+기본 제어권은 RC 우선이다.
+
+Upper 자동주행이 활성화되려면 다음 조건이 함께 필요하다.
+
+1. RC 데이터 fresh
+2. RC B 버튼 enable 상태 ON
+3. RC D 버튼 remote automation 상태 ON
+4. Upper Config CMD의 automation ON
+5. Upper Drive CMD fresh
+
+Upper Drive CMD가 timeout되면 FSM은 STOP 상태로 전환한다.
+
+## 5-2. Stop Priority
+
+STOP 조건은 일반 주행 명령보다 우선한다.
+
+우선순위:
+
+1. Upper force stop
+2. RC emergency stop
+3. 좌/우 모터 fault 또는 timeout
+4. auto/force upper 상황에서 Upper Drive CMD timeout
+5. RC timeout 또는 유효한 제어 소스 없음
+
+## 5-3. Weed / Blade Source Policy
+
+- RC mode에서는 RC switch 값으로 actuator/blade 목표를 만든다.
+- Auto mode에서는 안전 기본값에서 시작한 뒤, 유효한 Upper weed/blade CMD가 있을 때만 해당 값을 사용한다.
+- actuator/blade status는 각각 `0x18FF0320`, `0x18FF0330`으로 200ms 주기로 보고한다.
+
+## 6. Implementation Checklist for Upper Controller
+
+- [ ] CAN extended frame 사용
+- [ ] CAN speed 500 kbps 설정
+- [ ] multi-byte payload Big-endian 구현
+- [ ] `0x18FF0200` Drive CMD를 200ms 주기로 송신
+- [ ] `max_speed_kmh_x100`는 `km/h x 100`으로 송신, 예: 3km/h = 300
+- [ ] `0x18FF0210` Config CMD는 공통 설정만 송신
+- [ ] actuator 명령은 `0x18FF0230` 사용
+- [ ] blade 명령은 `0x18FF0240` 사용
+- [ ] Gateway status `0x18FF0310`의 FSM/timeout bit를 모니터링
+- [ ] actuator status `0x18FF0320` 모니터링
+- [ ] blade status `0x18FF0330` 모니터링
+
+## 7. Notes
+
+- `0x18FF0220`은 `0x18FF0210 data[6] bit0=1`일 때 FSM 주행 로직에서 사용한다.
+- Vehicle Motion `0x18FF4000`, Vehicle Monitor `0x18FF4010`은 test/debug 성격이다.
+- actuator/blade 명령은 `0x18FF0210`에서 분리되어 있다.
+- 현재 명세는 VCU Gateway 코드 기준 Draft이며, 실제 장비 테스트 결과에 따라 수정될 수 있다.

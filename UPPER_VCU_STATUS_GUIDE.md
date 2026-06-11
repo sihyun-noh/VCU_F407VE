@@ -86,6 +86,7 @@
   - `4`: `TO_MOTOR_LEFT`
   - `5`: `TO_MOTOR_RIGHT`
   - `6`: `TO_MULTIPLE`
+  - `7`: `TO_UPPER_AUTO` (`0x18FF0220` 선택 명령 timeout)
 
 ## 3) CAN 프레임 매핑 (`0x18FF0310`)
 - `data[0:1]` = `power_supply_value` (`int16`, big-endian)
@@ -123,12 +124,14 @@
 
 ## 6) 관련 프레임 참고
 - `0x18FF0300`: 모터 RPM 피드백 (`±664` clamp)
-- `0x18FF0320`: 차량 운동 상태(yaw/yaw rate/speed)
-- `0x18FF0330`: 테스트/디버그 모니터
+- `0x18FF0320`: weed actuator 상태(actuator_state/error/target/actual/status/meta)
+- `0x18FF0330`: weed blade 상태(blade_state/fault/left rpm/right rpm/cmd/meta)
+- `0x18FF4000`: 차량 운동 상태(yaw/yaw rate/speed), test/debug
+- `0x18FF4010`: 차량 모니터/디버그
   - `data[4:5]`는 IMU gyro Z 기반 yaw rate(deg/s*10)를 우선 사용
   - IMU 값이 유효하지 않으면 명령 기반 yaw rate로 fallback
-- `0x18FF0340`: weed actuator 상태(status/error/current/target/actual/speed)
-- `0x18FF0350`: blade 상태(fault/cmd/source/rpm/meta)
 - `0x18FF00C8`: weed actuator 피드백 RX(position/status/error/speed/input)
 - `0x18FF0200`: Upper drive cmd (`throttle/steering + runtime max`)
-- `0x18FF0210`: Upper config (`automation + relay + accel`)
+- `0x18FF0210`: Upper config (`automation + force stop + force active + relay + accel`)
+- `0x18FF0230`: Upper weed actuator cmd (`command_type + target_position_mm`)
+- `0x18FF0240`: Upper weed blade cmd (`command_type + left/right rpm`)

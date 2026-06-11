@@ -122,7 +122,9 @@
   - 신규 Upper 자동주행 명령 ID 추가:
     - `0x18FF0220` (`linear_mps_x1000`, `yaw_rate_deg_s_x10`)
   - Upper 제어 경로 통일:
-    - `force_upper_active` / auto handover 모두 `0x18FF0220` 기반 경로 사용
+    - 과거 구현: `force_upper_active` / auto handover 모두 `0x18FF0220` 기반 경로 사용
+    - 당시 기준: `0x18FF0200` Drive CMD 기반 경로 사용, `0x18FF0220`은 확장 후보
+    - 2026-06-08 기준: `0x18FF0210 data[6] bit0=1` 선택 시 `0x18FF0220` Auto Direct Drive CMD 사용
   - AUTO 혼합 방식 선택 매크로 추가 (`vcu_gateway.h`):
     - `UPPER_AUTO_MIX_MODE_KINEMATIC`
     - `UPPER_AUTO_MIX_MODE_RC_MIXER`
@@ -147,8 +149,8 @@
     - `0x18FF00C8` (`CYL -> VCU`)
     - 필드 파싱: position/current/status flags/error/speed/input
   - 신규 upper weed status TX ID 추가:
-    - `0x18FF0340` (`Gateway -> Upper`)
-    - status/error/current/input/meta/target/actual/speed 보고
+    - 과거 구현: `0x18FF0340` (`Gateway -> Upper`)
+    - 현재 기준: `0x18FF0320` weed actuator status로 이동
   - actuator pre-command 재무장 정책 보강:
     - 실제 position이 target 근접(`WEED_ACTUATOR_POS_TOL_MM`) 시 `pre_sent` 재무장
   - 구조 개선:
@@ -156,6 +158,27 @@
     - `can_tx_thread`는 pending frame 송신 전용으로 정리
   - CAN1 필터 반영:
     - `hardware/CAN.c` filter #4를 `0x18FF00C8` 수신용으로 설정
+
+### 1.2 Upper CAN Protocol Sync (2026-05-22)
+- 상위제어기 전달용 CAN 스펙과 레포 문서 동기화
+  - `0x18FF0200`: 현재 Auto/Upper 주행 기본 명령으로 정리
+  - `0x18FF0220`: 당시 FSM 주행 로직 미사용, 선속도/yaw rate 확장 후보로 명시
+  - 2026-06-08 변경: `0x18FF0210 data[6] bit0=1` 선택 시 Auto Direct Drive CMD로 사용
+  - `0x18FF0230`: weed actuator 전용 CMD 확정
+  - `0x18FF0240`: weed blade 전용 CMD 확정
+  - `0x18FF0320`: weed actuator status로 정리
+  - `0x18FF0330`: weed blade status로 정리
+  - `0x18FF4000`, `0x18FF4010`: 차량 motion/debug monitor로 정리
+- `0x18FF0210` Config CMD 정리
+  - `data[0] automation`
+  - `data[1] upper_force_stop`
+  - `data[2] upper_force_active`
+  - `data[3] relay_mask`
+  - `data[4] left_accel_cmd`
+  - `data[5] right_accel_cmd`
+  - 당시 `data[6:7] reserved`
+  - 2026-06-08 변경: `data[6] upper_drive_cmd_select`, `data[7] reserved`
+- Upper status 송신 주기 기준 `UPPER_STATUS_TX_PERIOD_MS = 200ms` 문서 반영
 
 ## 1. 적용 파일
 - `user/vcu_gateway.h`
@@ -192,7 +215,7 @@
 
 ### 2.3 `0x18FF0210` Config CMD 정리
 - `data[0] automation` 복구
-- `data[6] left_accel_cmd`, `data[7] right_accel_cmd`
+- 현재 기준: `data[4] left_accel_cmd`, `data[5] right_accel_cmd`
 - `driver_config_bitmask` override 제거
 - 드라이버 enable 비트는 항상 기본값 고정:
   - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
@@ -239,7 +262,7 @@
   - `500 kbps`
 
 ## 3. 비고
-- 모니터링(`0x18FF0320/0330`)은 현재 명령 기반 적분값임
+- 현재 기준: 차량 모니터링은 `0x18FF4000/4010`, `0x18FF0320/0330`은 weed actuator/blade status
 - 실측 RPM 기반으로 바꾸려면 `update_motion_monitor()` 입력 소스 변경 필요
 
 
@@ -252,14 +275,13 @@
   - `UPPER_VCU_STATUS_GUIDE.md`
   - `VCU_GATEWAY_REFERENCE.md`
 - 변경 내용:
-  - Upper config(`0x18FF0210`)의 weed/blade 명령 해석 확장
-    - `data[1]`: weed target(stage 또는 mm)
-    - `data[2]`: blade cmd(stage 또는 rpm)
+  - 과거 구현: Upper config(`0x18FF0210`)의 weed/blade 명령 해석 확장
+    - 현재 기준: weed/blade 직접 명령은 `0x18FF0230`, `0x18FF0240`으로 분리
   - FSM에서 RC/Upper 게이트 기반 선택값 적용
     - `weed_target_selected`, `blade_rpm_selected`
     - gate: `weed_cmd_active = upper_auto_ready || rc_active`
   - 신규 상위 보고 ID 추가
-    - `0x18FF0350` (`Gateway -> Upper`, blade status)
+    - 현재 기준: `0x18FF0330` (`Gateway -> Upper`, blade status)
   - blade 제어 구조 명확화
     - `blade_cmd_step()`에서 목표 rpm 결정
     - `blade_tx_plan_step()`에서 250ms 주기 pending 생성

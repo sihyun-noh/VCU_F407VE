@@ -62,6 +62,7 @@ typedef struct {
   uint8_t relay_mask;      /* data[3] */
   uint8_t left_accel_cmd;  /* data[4]: left accel (0..255) */
   uint8_t right_accel_cmd; /* data[5]: right accel (0..255) */
+  uint8_t upper_drive_cmd_select; /* data[6] bit0: 0=0x18FF0200, 1=0x18FF0220 */
 } upper_intent_t;
 
 typedef struct {
@@ -76,8 +77,10 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  int16_t linear_mps_x1000;   /* data[0:1], linear speed (m/s * 1000) */
-  int16_t yaw_rate_deg_s_x10; /* data[2:3], yaw rate (deg/s * 10) */
+  int16_t left_driver_input_cmd;  /* data[0:1], left logical driver input */
+  int16_t right_driver_input_cmd; /* data[2:3], right logical driver input */
+  uint16_t max_driver_input_cmd;  /* data[4:5], clamp reference */
+  uint16_t max_speed_kmh_x100;    /* data[6:7], monitor/reference */
 } upper_intent_auto_t;
 
 typedef struct {
@@ -394,7 +397,7 @@ static bool read_mpu_gyro_z_deg_s(float* out_deg_s) {
 }
 
 static uint8_t make_timeout_detail_code(bool rc_timeout, bool upper_cfg_timeout, bool upper_drive_timeout,
-                                        bool motor_left_timeout, bool motor_right_timeout) {
+                                        uint8_t upper_timeout_code, bool motor_left_timeout, bool motor_right_timeout) {
   uint8_t code = TO_NONE;
   uint8_t cnt = 0;
 
@@ -407,7 +410,7 @@ static uint8_t make_timeout_detail_code(bool rc_timeout, bool upper_cfg_timeout,
     cnt++;
   }
   if (upper_drive_timeout) {
-    code = TO_UPPER_DRIVE;
+    code = upper_timeout_code;
     cnt++;
   }
   if (motor_left_timeout) {
@@ -500,6 +503,33 @@ static void mix_upper_drive_cmd_to_tracks(const upper_intent_drive_t* drive, int
 
   *left_out = out.left_input;
   *right_out = out.right_input;
+}
+
+/* Upper auto direct command:
+ * 0x18FF0220 bypasses the VCU mixer and carries logical left/right driver inputs.
+ * VCU still applies installation direction signs so Upper does not need to know
+ * the physical motor wiring polarity.
+ */
+static void mix_upper_auto_direct_cmd_to_tracks(const upper_intent_auto_t* auto_cmd, int16_t* left_out,
+                                                int16_t* right_out) {
+  int32_t max_driver;
+  int32_t left_cmd;
+  int32_t right_cmd;
+
+  if (!auto_cmd || !left_out || !right_out)
+    return;
+
+  max_driver = (auto_cmd->max_driver_input_cmd > 0u) ? (int32_t)auto_cmd->max_driver_input_cmd : rcm_max_driver_i32();
+  max_driver = clamp_i32(max_driver, 1, 2000);
+
+  left_cmd = clamp_i32((int32_t)auto_cmd->left_driver_input_cmd, -max_driver, max_driver);
+  right_cmd = clamp_i32((int32_t)auto_cmd->right_driver_input_cmd, -max_driver, max_driver);
+
+  left_cmd *= (g_rcm_vehicle.left_dir_sign >= 0) ? 1 : -1;
+  right_cmd *= (g_rcm_vehicle.right_dir_sign >= 0) ? 1 : -1;
+
+  *left_out = (int16_t)clamp_i32(left_cmd, -max_driver, max_driver);
+  *right_out = (int16_t)clamp_i32(right_cmd, -max_driver, max_driver);
 }
 
 static int16_t sbus_convert_to_control(int16_t sbus_data, uint8_t data[2]) {
@@ -731,7 +761,9 @@ static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
    * data[3]: relay mask
    * data[4]: left accel command (0..255)
    * data[5]: right accel command (0..255)
-   * data[6:7]: reserved
+   * data[6]: upper drive command select bit mask
+   *          bit0=0 -> use 0x18FF0200, bit0=1 -> use 0x18FF0220
+   * data[7]: reserved
    */
   out->automation = ((rx->data[0] & 0x01u) != 0u);
   out->upper_force_stop = ((rx->data[1] & 0x01u) != 0u);
@@ -739,6 +771,9 @@ static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
   out->relay_mask = (uint8_t)rx->data[3];
   out->left_accel_cmd = (uint8_t)rx->data[4];
   out->right_accel_cmd = (uint8_t)rx->data[5];
+  out->upper_drive_cmd_select = ((rx->data[6] & UPPER_DRIVE_CMD_SELECT_BIT) != 0u)
+                                    ? UPPER_DRIVE_CMD_SELECT_0220
+                                    : UPPER_DRIVE_CMD_SELECT_0200;
 
   return true;
 }
@@ -796,7 +831,7 @@ static bool decode_upper_blade_cmd(const can_frame_t* rx, upper_blade_cmd_t* out
   return true;
 }
 
-/* Example: decode upper rpm cmd payload (adjust to your protocol) */
+/* Decode Upper normalized throttle/steering drive command (0x18FF0200). */
 static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* out) {
   if (rx->ext_id != CANID_UPPER_CMD_DRIVE_RX)
     return false;
@@ -827,19 +862,23 @@ static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* 
 static bool decode_upper_auto_cmd(const can_frame_t* rx, upper_intent_auto_t* out) {
   if (rx->ext_id != CANID_UPPER_CMD_AUTO_RX)
     return false;
-  if (rx->dlc < 4u)
+  if (rx->dlc < 8u)
     return false;
 
   memset(out, 0, sizeof(*out));
   out->ts = now_tick();
   out->valid = false;
 
-  /* Upper -> gateway auto payload (0x18FF0220):
-   * data[0:1] : linear_mps_x1000 (int16)
-   * data[2:3] : yaw_rate_deg_s_x10 (int16)
+  /* Upper -> gateway auto direct payload (0x18FF0220):
+   * data[0:1] : left_driver_input_cmd (int16, BE)
+   * data[2:3] : right_driver_input_cmd (int16, BE)
+   * data[4:5] : max_driver_input_cmd (uint16, BE)
+   * data[6:7] : max_speed_kmh_x100 (uint16, BE, monitor/reference)
    */
-  out->linear_mps_x1000 = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
-  out->yaw_rate_deg_s_x10 = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
+  out->left_driver_input_cmd = (int16_t)((uint16_t)rx->data[0] << 8 | ((uint16_t)rx->data[1]));
+  out->right_driver_input_cmd = (int16_t)((uint16_t)rx->data[2] << 8 | ((uint16_t)rx->data[3]));
+  out->max_driver_input_cmd = (uint16_t)(((uint16_t)rx->data[4] << 8) | ((uint16_t)rx->data[5]));
+  out->max_speed_kmh_x100 = (uint16_t)(((uint16_t)rx->data[6] << 8) | ((uint16_t)rx->data[7]));
   out->valid = true;
 
   return true;
@@ -1826,6 +1865,7 @@ static void fsm_thread_entry(void* parameter) {
   rc_intent_t rc;
   upper_intent_t upper;
   upper_intent_drive_t upper_drive;
+  upper_intent_auto_t upper_auto;
   upper_weed_cmd_t upper_weed;
   upper_blade_cmd_t upper_blade;
   motor_status_t motor_left_st;
@@ -1844,6 +1884,7 @@ static void fsm_thread_entry(void* parameter) {
     rc = g_latest.rc;
     upper = g_latest.upper_cmd_config;
     upper_drive = g_latest.upper_cmd_drive;
+    upper_auto = g_latest.upper_cmd_auto;
     upper_weed = g_latest.upper_cmd_weed;
     upper_blade = g_latest.upper_cmd_blade;
     /* motor driver status */
@@ -1859,6 +1900,8 @@ static void fsm_thread_entry(void* parameter) {
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
     bool upper_cfg_valid = upper.valid; /* config timeout is not used as a hard validity gate */
     bool upper_drive_ok = upper_drive.valid && is_fresh_tick(now, upper_drive.ts, UPPER_DRIVE_TIMEOUT_MS);
+    bool upper_auto_ok = upper_auto.valid && is_fresh_tick(now, upper_auto.ts, UPPER_DRIVE_TIMEOUT_MS);
+    bool use_upper_auto_direct = (upper.upper_drive_cmd_select == UPPER_DRIVE_CMD_SELECT_0220);
 
     /* motor driver status check */
     bool motor_left_ok = motor_left_st.valid && is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS) &&
@@ -1867,7 +1910,8 @@ static void fsm_thread_entry(void* parameter) {
                           (motor_right_st.fault_bits == 0);
 
     bool rc_timeout = (rc.ts != 0) && !rc_ok;
-    bool upper_drive_timeout = (upper_drive.ts != 0) && !upper_drive_ok;
+    bool upper_drive_timeout =
+        use_upper_auto_direct ? ((upper_auto.ts != 0) && !upper_auto_ok) : ((upper_drive.ts != 0) && !upper_drive_ok);
     bool motor_left_timeout = (motor_left_st.ts != 0) && !is_fresh_tick(now, motor_left_st.ts, MOTOR_TIMEOUT_MS);
     bool motor_right_timeout = (motor_right_st.ts != 0) && !is_fresh_tick(now, motor_right_st.ts, MOTOR_TIMEOUT_MS);
 
@@ -1974,8 +2018,8 @@ static void fsm_thread_entry(void* parameter) {
     } else {
       /* Not STOP:
        * Priority policy:
-       * 1) force_upper -> Upper drive-cmd path (0x18FF0200 override)
-       * 2) RC active + auto handover ready -> Upper drive-cmd path (0x18FF0200)
+       * 1) force_upper -> Upper drive-cmd path selected by 0x18FF0210 data[6] bit0
+       * 2) RC active + auto handover ready -> selected Upper drive-cmd path
        * 3) RC active + no auto handover -> RC path
        * 4) otherwise -> timeout stop
        */
@@ -1984,8 +2028,29 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_left.src = FSM_CTRL_SRC_UPPER_AUTO;
         out_cmd_right.src = FSM_CTRL_SRC_UPPER_AUTO;
 
-        if (!upper_drive_ok) {
-				//if (upper_drive_ok) {
+        if (use_upper_auto_direct) {
+          if (!upper_auto_ok) {
+            out_cmd_left.type = CMD_STOP;
+            out_cmd_left.rpm_axis1 = 0;
+            out_cmd_left.rpm_axis2 = 0;
+            out_cmd_right.type = CMD_STOP;
+            out_cmd_right.rpm_axis1 = 0;
+            out_cmd_right.rpm_axis2 = 0;
+            out_st.stop_reason = FSM_STOP_TIMEOUT; /* 0x18FF0220 timeout */
+            out_st.timeout_detail_code = TO_UPPER_AUTO;
+          } else {
+            int16_t left_cmd = 0;
+            int16_t right_cmd = 0;
+            mix_upper_auto_direct_cmd_to_tracks(&upper_auto, &left_cmd, &right_cmd);
+
+            out_cmd_left.type = CMD_SETPOINT;
+            out_cmd_left.rpm_axis1 = left_cmd;
+            out_cmd_left.rpm_axis2 = left_cmd;
+            out_cmd_right.type = CMD_SETPOINT;
+            out_cmd_right.rpm_axis1 = right_cmd;
+            out_cmd_right.rpm_axis2 = right_cmd;
+          }
+        } else if (!upper_drive_ok) {
           out_cmd_left.type = CMD_STOP;
           out_cmd_left.rpm_axis1 = 0;
           out_cmd_left.rpm_axis2 = 0;
@@ -2033,8 +2098,10 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_STOP;
         out_st.control_src = FSM_CTRL_SRC_STOP;
         out_st.stop_reason = FSM_STOP_TIMEOUT;
-        out_st.timeout_detail_code = make_timeout_detail_code(
-            rc_timeout, false, upper_drive_timeout, motor_left_timeout, motor_right_timeout);
+        out_st.timeout_detail_code =
+            make_timeout_detail_code(rc_timeout, false, upper_drive_timeout,
+                                     use_upper_auto_direct ? TO_UPPER_AUTO : TO_UPPER_DRIVE, motor_left_timeout,
+                                     motor_right_timeout);
       }
     }
 
@@ -2053,14 +2120,11 @@ static void fsm_thread_entry(void* parameter) {
       out_st.relay_st |= bit_mask;
     }
 
-    /* Apply same default driver configuration to left/right.
-     * Accept upper-supplied config only when enable bits are BOTH_ENABLE.
-     */
     /* Driver config is fixed to default bits. */
     out_cmd_left.enable_bit = MOTOR_DRV_DEFAULT_ENABLE_BITS;
     out_cmd_right.enable_bit = MOTOR_DRV_DEFAULT_ENABLE_BITS;
 
-    /* Acceleration can be tuned from upper config payload (0x18FF0210 data[6:7]). */
+    /* Acceleration can be tuned from upper config payload (0x18FF0210 data[4:5]). */
     out_cmd_left.axis1_accel_bit = upper_cfg_valid ? upper.left_accel_cmd : MOTOR_DRV_DEFAULT_AXIS1_ACC;
     out_cmd_left.axis2_accel_bit = upper_cfg_valid ? upper.left_accel_cmd : MOTOR_DRV_DEFAULT_AXIS2_ACC;
     out_cmd_right.axis1_accel_bit = upper_cfg_valid ? upper.right_accel_cmd : MOTOR_DRV_DEFAULT_AXIS1_ACC;

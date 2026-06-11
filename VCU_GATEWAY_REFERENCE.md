@@ -41,21 +41,24 @@
   - 처리:
     - `0x18FF0200` drive 명령 파싱
     - `0x18FF0210` config 명령 파싱
-    - `0x18FF00C8` weed actuator feedback
-- `0x18FF0032` blade left status
-- `0x18FF0030` blade right status 파싱
+    - `0x18FF0220` auto direct 명령 파싱(`0x18FF0210 data[6] bit0=1`일 때 사용)
+    - `0x18FF0230` weed actuator 명령 파싱
+    - `0x18FF0240` weed blade 명령 파싱
+    - `0x18FF00C8` weed actuator feedback 파싱
+    - `0x18FF0032` blade left status 파싱
+    - `0x18FF0030` blade right status 파싱
     - `0x18FF0021/0020` 모터 상태 파싱
   - 출력: `g_latest.upper_*`, `g_latest.motor_*` 갱신
 
-- `can_tx_thread` (CAN 송신 스레드, 주기 100ms)
+- `can_tx_thread` (CAN 송신 스레드, control/pending TX base 100ms, Upper status 200ms)
   - 역할: FSM에서 결정된 최신 상태/명령을 CAN으로 주기 송신 (판단 로직 없음, 송신 전담)
   - 입력: `g_latest.motor_cmd_*`, `g_latest.upper_*`, `g_latest.motion_monitor`, `g_latest.rc`
   - 송신:
     - 모터 명령(`0x18FF2100`, `0x18FF2000`)
     - 상위 상태(`0x18FF0310`, `0x18FF0300`)
-    - 차량 모니터링(`0x18FF0320`, `0x18FF0330`)
-    - weed actuator 상태(`0x18FF0340`)
-    - blade 상태(`0x18FF0350`)
+    - weed actuator 상태(`0x18FF0320`)
+    - blade 상태(`0x18FF0330`)
+    - 차량 모니터링(`0x18FF4000`, `0x18FF4010`)
     - weed actuator 제어(`0x18EFC800`, pending frame만 전송)
     - blade 제어(`0x18FF3200`, `0x18FF3000`, 250ms periodic)
 
@@ -112,13 +115,27 @@
   - `data[6:7]` `max_speed_kmh_x100` (`uint16`)
 - `0x18FF0210` (Upper -> Gateway config)
   - `data[0]` `automation`
-  - `data[1]` `cultivator_down`
-  - `data[2]` `cultivator_on`
-  - `data[3]` `upper_force_stop`
-  - `data[4]` `upper_force_active`
-  - `data[5]` `relay_mask`
-  - `data[6]` `left_accel_cmd`
-  - `data[7]` `right_accel_cmd`
+  - `data[1]` `upper_force_stop`
+  - `data[2]` `upper_force_active`
+  - `data[3]` `relay_mask`
+  - `data[4]` `left_accel_cmd`
+  - `data[5]` `right_accel_cmd`
+  - `data[6]` `upper_drive_cmd_select` (`bit0=0`: `0x18FF0200`, `bit0=1`: `0x18FF0220`)
+  - `data[7]` reserved
+- `0x18FF0220` (Upper -> Gateway auto direct drive, 선택 시 사용)
+  - `data[0:1]` `left_driver_input_cmd` (`int16`)
+  - `data[2:3]` `right_driver_input_cmd` (`int16`)
+  - `data[4:5]` `max_driver_input_cmd` (`uint16`)
+  - `data[6:7]` `max_speed_kmh_x100` (`uint16`)
+- `0x18FF0230` (Upper -> Gateway weed actuator cmd)
+  - `data[0]` `command_type` (`0 STOP`, `1 SET_TARGET`, `2 MOVE_TO_TARGET`)
+  - `data[1]` `stage` (`0 UP`, `1 MID`, `2 DOWN`)
+  - `data[2:3]` `target_position_mm` (`uint16`)
+- `0x18FF0240` (Upper -> Gateway weed blade cmd)
+  - `data[0]` `command_type` (`0 STOP`, `1 SET_RPM`, `2 RUN`)
+  - `data[1]` `mode` (`0 SYNC`)
+  - `data[2:3]` `left_blade_rpm` (`uint16`)
+  - `data[4:5]` `right_blade_rpm` (`uint16`)
 - `0x18FF0021` left motor status
 - `0x18FF0020` right motor status
 - `0x18FF00C8` weed actuator feedback
@@ -130,10 +147,10 @@
 - `0x18FF2000` Gateway -> Driver2(right) cmd
 - `0x18FF0300` motor feedback rpm/status
 - `0x18FF0310` gateway status (`upper_vcu_st`)
-- `0x18FF0320` vehicle motion status
-- `0x18FF0330` vehicle monitor/debug status
-- `0x18FF0340` weed actuator status
-- `0x18FF0350` blade status
+- `0x18FF0320` weed actuator status
+- `0x18FF0330` weed blade status
+- `0x18FF4000` vehicle motion status(test/debug)
+- `0x18FF4010` vehicle monitor/debug status(test/debug)
 - `0x18EFC800` weed actuator command
 - `0x18FF3200` blade left command
 - `0x18FF3000` blade right command
@@ -144,9 +161,8 @@
   2. `rc_emergency_stop`
   3. motor fault/timeout
 - STOP이 아니면:
-  - `upper_force_active=true` -> Upper 강제 선택
+  - `upper_force_active=true` 또는 auto handover 성립 -> Upper drive(`0x18FF0200`) 선택
   - else `RC valid + rc_enable` -> RC 선택
-  - else `upper_ok(valid + freshness)` -> Upper 선택
   - else -> STOP(timeout)
 
 ### FSM 타임아웃/신뢰성 게이트 설명
@@ -161,7 +177,7 @@
     - failsafe는 수신된 SBUS 데이터가 \"RC disconnect/ connect 상태\"를 나타내는 신호
     - 따라서 `rc.valid`만으로 failsafe 상태를 대체 해석하면 안 됨
 - Upper(CAN):
-  - config 경로: `upper.valid && UPPER_TIMEOUT_MS 이내`
+  - config 경로: `upper.valid` (config freshness timeout은 hard stop gate로 미사용)
   - drive 경로: `upper_drive.valid && UPPER_DRIVE_TIMEOUT_MS 이내`
 - Motor status(CAN):
   - 좌/우 각각 `valid && MOTOR_TIMEOUT_MS 이내 && fault_bits==0`
@@ -186,7 +202,7 @@
 - `enable_bit`는 항상 기본값 사용:
   - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
 - accel:
-  - `upper_ok`일 때 `0x18FF0210 data[6:7]` 적용
+  - `upper.valid`일 때 `0x18FF0210 data[4:5]` 적용
   - 아니면 기본 accel `0x64`
 
 ### Runtime limit 적용 정책 (`0x18FF0200 data[4:7]`)
@@ -265,6 +281,7 @@
 - `4`: `TO_MOTOR_LEFT`
 - `5`: `TO_MOTOR_RIGHT`
 - `6`: `TO_MULTIPLE`
+- `7`: `TO_UPPER_AUTO` (`0x18FF0220` selected command timeout)
 
 ## 9) RC 상태 비트 (`0x18FF0310 data[4]`)
 - bit0 `RC_ST_ENABLE` (B 버튼)
@@ -274,6 +291,7 @@
 - bit4 `RC_ST_CULTIVATOR_DOWN` (좌 토글)
 - bit5 `RC_ST_CULTIVATOR_ON` (우 토글)
 - bit6 `RC_ST_REMOTE_AUTOMATION` (D 버튼)
+- bit7 `RC_ST_DRIVE_MODE` (C 버튼, `0=민첩형`, `1=안정형`)
 
 ## 10) VCU FSM 비트 (`0x18FF0310 data[5]`)
 - bit0 `FSM_ST_MODE_SAFE_STOP`
@@ -305,9 +323,9 @@
   - 원인 상세는 `data[7] timeout_detail_code`(`TO_RC`, `TO_UPPER_*`, `TO_MOTOR_*`)로 구분
 
 ## 11) 모니터링 계산 기준
-- `0x18FF0320`, `0x18FF0330`은 현재 명령값(out_cmd) 기반 적분값
-- 실측 RPM 기반이 아님
-- 실측 기반 전환 시 `update_motion_monitor()` 입력 변경 필요
+- 차량 모니터링은 `0x18FF4000`, `0x18FF4010`으로 이동됨
+- `0x18FF0320`, `0x18FF0330`은 각각 weed actuator/blade 상위 상태 보고에 사용
+- 차량 motion monitor 값은 현재 명령값(out_cmd) 기반 적분값이며 실측 RPM 기반이 아님
 
 ## 12) 관련 문서
 - `UPPER_GATEWAY_CAN_SPEC_DRAFT.md`

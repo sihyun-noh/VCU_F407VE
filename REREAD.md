@@ -5,7 +5,7 @@
 ## 핵심 구조
 - 입력:
   - SBUS (`CH3 throttle`, `CH1 steering`)
-  - Upper CMD CAN (`0x18FF0200` 속도, `0x18FF0210` 설정)
+  - Upper CMD CAN (`0x18FF0200` 주행, `0x18FF0210` 설정, `0x18FF0230` actuator, `0x18FF0240` blade)
   - Motor Driver 상태 CAN (left/right status)
 - 내부:
   - `sbus_thread` -> RC intent 업데이트
@@ -15,6 +15,8 @@
   - Driver1/2 명령 송신
   - Upper 상태 송신 (`0x18FF0310`)
   - Upper 모터 피드백 송신 (`0x18FF0300`)
+  - Weed actuator/blade 상태 송신 (`0x18FF0320`, `0x18FF0330`)
+  - 차량 test/debug 모니터 송신 (`0x18FF4000`, `0x18FF4010`)
 
 ## 차동구동(현재 규칙)
 - 기본식:
@@ -31,9 +33,10 @@
 - `data[4]`: RC status mask
 - `data[5]`: VCU FSM status mask
 - `data[6]`: relay status
-- `data[7]`: reserved
+- `data[7]`: timeout detail code
 
 ## 참고 문서
 - `DIFFERENTIAL_DRIVE.md`
 - `UPPER_VCU_STATUS_GUIDE.md`
-- `VCU_GATEWAY_UPDATE_SUMMARY.md`
+- `VCU_GATEWAY_REFERENCE.md`
+- `UPPER_GATEWAY_CAN_SPEC_DRAFT_KR.md`

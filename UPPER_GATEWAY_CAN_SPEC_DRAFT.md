@@ -1,287 +1,299 @@
 # Upper <-> Gateway CAN Interface Draft
 
-## 1. Scope
-- This draft documents current implementation in `user/vcu_gateway.c` and `user/vcu_gateway.h`.
-- Focus:
-  - `Upper -> Gateway` command RX
-  - `Gateway -> Upper` status TX
-- All frames use Extended ID and DLC 8 unless noted.
+> Release version: `AGMO-VCU-CAN-2026.05.22-DRAFT`
+> Updated: 2026-05-22
+> Reference code: `user/vcu_gateway.c`, `user/vcu_gateway.h`
+> This document mirrors the current VCU Gateway implementation for Upper Controller integration.
 
-## 2. Communication Summary
-- CAN bitrate: `500 kbps` (500k bps)
-- TX periodic thread: every `100 ms` (`CAN_TX_PERIOD_MS`)
-- FSM update period: every `10 ms` (`FSM_PERIOD_MS`)
-- RX processing: event-driven from CAN RX queue
-- Multi-byte integer byte order: **big-endian** (`MSB first`, `LSB second`)
+## 1. Common Rules
 
-Normalization scale (unified):
-- Input scale (RC and Upper drive cmd): `RCM_MAX_RC_INPUT` (current `±500`)
-- Driver output scale: `RCM_MAX_DRIVER_INPUT` (current `±664`, `5 km/h` max model)
+| Item | Value |
+| ---- | ----- |
+| CAN bitrate | 500 kbps |
+| CAN frame | Extended ID |
+| DLC | 8 bytes unless otherwise noted |
+| Multi-byte endian | Big-endian, MSB first |
+| Signed integer | two's complement |
+| Gateway status period | 200ms |
+| Drive CMD period | 200ms recommended, timeout causes STOP |
 
-## 3. CAN ID Table (Upper Interface)
+Endian examples:
 
-| Direction | ExtID | Period | Purpose |
-|---|---:|---:|---|
-| Upper -> Gateway | `0x18FF0200` | Event | Drive command (throttle/steering) |
-| Upper -> Gateway | `0x18FF0210` | Event | Config/aux command |
-| Upper -> Gateway | `0x18FF0220` | Event | Auto command (linear speed/yaw rate) |
-| Gateway -> Upper | `0x18FF0300` | 100 ms | Motor driver RPM feedback |
-| Gateway -> Upper | `0x18FF0310` | 100 ms | Gateway/RC/FSM status |
-| Gateway -> Upper | `0x18FF0320` | 100 ms | Vehicle motion status |
-| Gateway -> Upper | `0x18FF0330` | 100 ms | Vehicle monitor/debug |
-| Gateway -> Upper | `0x18FF0340` | 100 ms | Weed actuator status |
-| Gateway -> Upper | `0x18FF0350` | 100 ms | Blade status |
-| Weed actuator -> Gateway | `0x18FF00C8` | 100 ms | Weed actuator feedback |
-| Blade -> Gateway | `0x18FF0032` | 100 ms | Blade left feedback |
-| Blade -> Gateway | `0x18FF0030` | 100 ms | Blade right feedback |
+| Value | Type | Hex bytes |
+| ----- | ---- | --------- |
+| `+50` | int16 BE | `00 32` |
+| `-50` | int16 BE | `FF CE` |
+| `300` | uint16 BE | `01 2C` |
+| `500` | uint16 BE | `01 F4` |
+| `1500` | uint16 BE | `05 DC` |
 
-## 4. Upper -> Gateway (CMD RX)
+## 2. CAN ID Summary
 
-### 4.1 `0x18FF0200` Drive Command
-- Decoder: `decode_upper_drive_cmd()`
-- Type: signed `int16` big-endian per signal
-- Clamp range in code: `-RCM_MAX_RC_INPUT..+RCM_MAX_RC_INPUT` (current: `-500..+500`)
+### 2.1 Upper -> Gateway RX
 
-| Byte | Signal | Type | Description |
-|---|---|---|---|
-| 0:1 | `throttle_cmd` | `int16` | Forward/backward command |
-| 2:3 | `steering_cmd` | `int16` | Left/right command |
-| 4:5 | `max_driver_input_cmd` | `uint16` | Runtime max driver input for upper mix |
-| 6:7 | `max_speed_kmh_x100` | `uint16` | Runtime max speed (km/h * 100) for upper mix/yaw model |
+| CAN ID | Name | Period | DLC | Purpose |
+| ------ | ---- | ------ | --- | ------- |
+| `0x18FF0200` | Drive CMD | 200ms | 8 | Upper drive command, current Auto drive command source |
+| `0x18FF0210` | Config CMD | On change | 8 | automation, force stop, force active, relay, accel, drive cmd select |
+| `0x18FF0220` | Auto Direct Drive CMD | 200ms recommended when selected | 8 | left/right driver direct input, mixer bypass |
+| `0x18FF0230` | Weed Actuator CMD | Event | 8 | actuator target/set/move/stop command |
+| `0x18FF0240` | Weed Blade CMD | Event | 8 | blade RPM set/run/stop command |
 
-Apply rule in current code:
-- `throttle_cmd`, `steering_cmd` are clamped to `±RCM_MAX_RC_INPUT` (current `±500`).
-- When `max_driver_input_cmd > 0`, upper mix uses that value as `vehicle_config.max_driver_input`.
-- When `max_speed_kmh_x100 > 0`, upper mix uses `max_speed_kmh_x100 / 100.0` as `vehicle_config.max_speed_kmh`.
-- If either runtime field is `0`, default compile-time config is kept (`RCM_MAX_DRIVER_INPUT`, `RCM_MAX_SPEED_KMH`).
-- Encoding note: send speed as `km/h * 100`.
-  - Example: `5 km/h` must be sent as `500`.
+### 2.2 Gateway -> Upper TX
 
-### 4.2 `0x18FF0210` Config/Aux Command
-- Decoder: `decode_upper_cmd()`
-- Note (current FSM policy):
-  - Config timeout is **not** used as a hard stop gate.
-  - Config validity for apply path is `upper.valid`.
+| CAN ID | Name | Period | DLC | Purpose |
+| ------ | ---- | ------ | --- | ------- |
+| `0x18FF0300` | Motor Status RPM | 200ms | 8 | motor driver RPM feedback |
+| `0x18FF0310` | Gateway Status | 200ms | 8 | VCU/RC/FSM/timeout status |
+| `0x18FF0320` | Weed Actuator Status | 200ms | 8 | actuator state/position/error |
+| `0x18FF0330` | Weed Blade Status | 200ms | 8 | blade state/fault/RPM |
+| `0x18FF4000` | Vehicle Motion | 200ms | 8 | vehicle motion monitor, test/debug |
+| `0x18FF4010` | Vehicle Monitor | 200ms | 8 | mixer/debug monitor, test/debug |
 
-| Byte | Signal | Type | Description |
-|---|---|---|---|
-| 0 | `automation` | `bool (bit0)` | Automation signal (used with RC remote automation for relay behavior) |
-| 1 | `weed_target` | `uint8` | Weed target stage(0=UP,1=MID,2=DOWN) or direct mm (0..200) |
-| 2 | `blade_cmd` | `uint8` | Blade stage(0=STOP,1=MID,2=HIGH) or direct rpm (0..max) |
-| 3 | `upper_force_stop` | `bool (bit0)` | E-stop request |
-| 4 | `upper_force_active` | `bool (bit0)` | Force-upper mode flag |
-| 5 | `relay_mask` | `uint8` | Relay command mask |
-| 6 | `left_accel_cmd` | `uint8` | Left accel command (0..255) |
-| 7 | `right_accel_cmd` | `uint8` | Right accel command (0..255) |
+## 3. Upper -> Gateway RX Detail
 
-Motor driver apply rule (current code):
-- `enable_bit` is fixed to default:
-  - `MOTOR_DRV_DEFAULT_ENABLE_BITS = 0xC3`
-  - (`D0_EN_BOTH_ENABLE(0x03) | D0_AXIS1_SPEED_MODE(0x80) | D0_AXIS2_SPEED_MODE(0x40)`)
-- Accel comes from `0x18FF0210` when `upper.valid == true`:
-  - `data[6]` -> left axis1/axis2 accel
-  - `data[7]` -> right axis1/axis2 accel
-- If `upper.valid == false`, default accel is used:
-  - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
-  - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
+### 3.1 `0x18FF0200` Drive CMD
 
-## 5. Gateway -> Upper (STATUS TX)
+Current Auto drive control uses this CAN ID. If this message times out during Upper/Auto control, VCU stops the motor command path.
 
-### 5.1 `0x18FF0300` Motor Driver Feedback
-- Packer: `pack_upper_status_rpm()`
-- Source: motor status snapshot from `0x18FF0021` (left), `0x18FF0020` (right)
+| Byte | Signal | Type | Endian | Range/Unit | Description |
+| ---- | ------ | ---- | ------ | ---------- | ----------- |
+| data[0:1] | `throttle_cmd` | int16 | BE | -500..500 | forward/backward normalized command |
+| data[2:3] | `steering_cmd` | int16 | BE | -500..500 | left/right normalized command |
+| data[4:5] | `max_driver_input_cmd` | uint16 | BE | recommended 0..2000 | driver input value when normalized input is 500 |
+| data[6:7] | `max_speed_kmh_x100` | uint16 | BE | km/h x 100 | reference max speed when normalized input is 500 |
 
-| Byte | Signal | Type | Range/Note |
-|---|---|---|---|
-| 0:1 | `driver_left_axis1_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
-| 2:3 | `driver_left_axis2_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
-| 4:5 | `driver_right_axis1_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
-| 6:7 | `driver_right_axis2_rpm` | `int16` | Clamped to `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
+Formula:
 
-### 5.2 `0x18FF0310` Gateway Status
-- Packer: `pack_upper_status()`
-- Layout matches requested status frame format.
+```text
+driver_input = max_driver_input_cmd * (throttle_cmd / 500)
+estimated_speed_kmh = (max_speed_kmh_x100 / 100.0) * (throttle_cmd / 500)
+```
 
-| Byte | Signal | Type | Description |
-|---|---|---|---|
-| 0:1 | `power_supply_value` | `int16` | Currently from left motor `supply_volt`, clamped `-664..664` (`±RCM_MAX_DRIVER_INPUT`) |
-| 2 | `md_left_fault_msg` | `uint8` | Driver 1 fault bits |
-| 3 | `md_right_fault_msg` | `uint8` | Driver 2 fault bits |
-| 4 | `rc_status_mask` | `uint8` | RC status bit mask |
-| 5 | `fsm_status_mask` | `uint8` | FSM status bit mask |
-| 6 | `relay_st` | `uint8` | Relay status mask |
-| 7 | `timeout_detail_code` | `uint8` | Timeout source detail code (`TO_*`) |
+Important:
 
-RC status bit mask (`data[4]`):
-- bit0: `RC_ST_ENABLE` (RC transmitter B button)
-- bit1: `RC_ST_EMERGENCY_STOP` (RC transmitter A button, E-STOP)
-- bit2: `RC_ST_FAILSAFE` (set when RC transmitter signal is lost/disconnected)
-- bit3: `RC_ST_FRESH` (RC signal is being updated in real time; if not fresh, treated as timeout state)
-- bit4: `RC_ST_CULTIVATOR_DOWN` (RC left toggle, implement lowered to ground)
-- bit5: `RC_ST_CULTIVATOR_ON` (RC right toggle, weeding/cultivator drive ON)
-- bit6: `RC_ST_REMOTE_AUTOMATION` (RC transmitter D button / remote automation active)
-- bit7: `RC_ST_DRIVE_MODE` (RC transmitter C button / drive mode: `0=agile`, `1=stable`)
+- Send 3.00km/h as `300`, not `3`.
+- Send 5.00km/h as `500`.
 
-FSM status bit mask (`data[5]`):
-- bit0: `FSM_ST_MODE_SAFE_STOP`
-- bit1: `FSM_ST_MODE_MANUAL_RC`
-- bit2: `FSM_ST_MODE_AUTO_ARMED`
-- bit3: `FSM_ST_MODE_AUTO_ACTIVE`
-- bit4: `FSM_ST_STOP_UPPER_FORCE`
-- bit5: `FSM_ST_STOP_RC_EMG`
-- bit6: `FSM_ST_STOP_MOTOR_FAULT`
-- bit7: `FSM_ST_STOP_TIMEOUT`
+Example, 3.00km/h reference, 50% forward, straight:
 
-FSM status bit set conditions (why each state occurs):
-- Mode bits are one-hot (bit0~bit3).
-- `bit0 SAFE_STOP`: STOP path selected or stop reason exists.
-- `bit1 MANUAL_RC`: RC driving mode (`rc_ok && rc_enable`) without auto-active handover.
-- `bit2 AUTO_ARMED`: RC automation requested but upper auto handover is not active yet.
-- `bit3 AUTO_ACTIVE`: upper control path active (force-upper or auto handover active).
-- `bit4 UPPER_FORCE`: set when stop reason is upper force stop.
-- `bit5 RC_EMG`: set when stop reason is RC emergency stop.
-- `bit6 MOTOR_FAULT`: set when stop reason is motor fault.
-- `bit7 TIMEOUT`: set when stop reason is timeout.
+```text
+00 FA 00 00 01 8C 01 2C
+```
 
-Timeout detail code (`data[7]`) mapping:
-- `0`: `TO_NONE` (no timeout detail)
-- `1`: `TO_RC` (RC timeout)
-- `2`: `TO_UPPER_CFG` (reserved; not used as hard timeout in current FSM path)
-- `3`: `TO_UPPER_DRIVE` (upper drive timeout)
-- `4`: `TO_MOTOR_LEFT` (left motor status timeout)
-- `5`: `TO_MOTOR_RIGHT` (right motor status timeout)
-- `6`: `TO_MULTIPLE` (multiple timeout conditions at the same time)
+This means:
 
-### 5.3 `0x18FF0320` Vehicle Motion Status
-- Packer: `pack_upper_vehicle_status()`
-- Purpose: motion snapshot
+```text
+throttle_cmd = 250
+steering_cmd = 0
+max_driver_input_cmd = 396
+max_speed_kmh_x100 = 300
+actual driver input = 396 * (250 / 500) = 198
+estimated speed = 3.00km/h * (250 / 500) = 1.50km/h
+```
 
-| Byte | Signal | Type | Scaling |
-|---|---|---|---|
-| 0:1 | `yaw_deg_0_360_x10` | `int16` | deg * 10 |
-| 2:3 | `yaw_rate_deg_s_x10` | `int16` | deg/s * 10 |
-| 4:5 | `left_speed_m_s_x100` | `int16` | m/s * 100 |
-| 6:7 | `right_speed_m_s_x100` | `int16` | m/s * 100 |
+### 3.2 `0x18FF0210` Config CMD
 
-### 5.4 `0x18FF0330` Vehicle Monitor/Debug
-- Packer: `pack_upper_vehicle_monitor()`
-- Purpose: test/monitoring aid
+Common config command. It does not include actuator/blade direct commands.
 
-| Byte | Signal | Type | Scaling |
-|---|---|---|---|
-| 0 | `throttle_percent` | `int8` | -100..100 |
-| 1 | `steering_percent` | `int8` | -100..100 |
-| 2 | `left_cmd_percent` | `int8` | -100..100 |
-| 3 | `right_cmd_percent` | `int8` | -100..100 |
-| 4:5 | `yaw_rate_deg_s_x10` | `int16` | IMU gyro Z deg/s * 10 (fallback: command-based yaw rate) |
-| 6:7 | `center_distance_m_x100` | `int16` | m * 100 (cm) |
+| Byte | Signal | Type | Endian | Range/Unit | Description |
+| ---- | ------ | ---- | ------ | ---------- | ----------- |
+| data[0] | `automation` | uint8 | - | bit0 | Upper automation request |
+| data[1] | `upper_force_stop` | uint8 | - | bit0 | global force stop |
+| data[2] | `upper_force_active` | uint8 | - | bit0 | force Upper control request |
+| data[3] | `relay_mask` | uint8 | - | bit mask | relay command |
+| data[4] | `left_accel_cmd` | uint8 | - | 0..255 | left motor accel |
+| data[5] | `right_accel_cmd` | uint8 | - | 0..255 | right motor accel |
+| data[6] | `upper_drive_cmd_select` | uint8 | - | bit0 | `0`=use `0x18FF0200`, `1`=use `0x18FF0220` |
+| data[7] | Reserved | - | - | - | send 0 |
 
-### 5.5 `0x18FF0340` Weed Actuator Status
-- Packer: `pack_upper_weed_status()`
-- Purpose: forward weed actuator runtime state/error/position to upper
+Example, automation ON and accel 100:
 
-| Byte | Signal | Type | Description |
-|---|---|---|---|
-| 0 | `status_flags` | `uint8` | actuator status bit flags (from `0x18FF00C8 data[3]`) |
-| 1 | `error_code` | `uint8` | actuator error code (`0x18FF00C8 data[4]`) |
-| 2 | `current_raw` | `uint8` | current raw (`0.25A/bit`) |
-| 3 | `input_state` | `uint8` | actuator input state |
-| 4 | `meta_bits` | `uint8` | bit0 valid, bit1 timeout, bit2 pre_sent |
-| 5 | `target_mm` | `uint8` | target position in mm (clamped 0..255) |
-| 6 | `actual_pos_mm` | `uint8` | actual position in mm (clamped 0..255) |
-| 7 | `speed_mm_s` | `uint8` | speed in mm/s (clamped 0..255) |
+```text
+01 00 00 00 64 64 00 00
+```
 
+Current policy:
 
-### 5.6 `0x18FF0350` Blade Status
-- Packer: `pack_upper_blade_status()`
+- Config timeout is not used as a hard stop gate.
+- Auto handover requires RC remote automation ON and Upper automation ON.
+- `data[6] bit0` selects the Upper drive command path. Default `0` preserves `0x18FF0200`; set `1` uses `0x18FF0220`.
+- Actuator command uses `0x18FF0230`.
+- Blade command uses `0x18FF0240`.
 
-| Byte | Signal | Type | Description |
-|---|---|---|---|
-| 0 | `left_fault_bits` | `uint8` | blade left fault bits |
-| 1 | `right_fault_bits` | `uint8` | blade right fault bits |
-| 2 | `blade_cmd_rpm` | `uint8` | current blade command rpm (0..255 clamp) |
-| 3 | `src_mask` | `uint8` | bit0 RC, bit1 UPPER_AUTO, bit2 STOP |
-| 4 | `left_rpm_axis1_div10` | `int8` | left rpm axis1 / 10 |
-| 5 | `right_rpm_axis1_div10` | `int8` | right rpm axis1 / 10 |
-| 6 | `left_meta` | `uint8` | bit0 valid, bit1 fresh |
-| 7 | `right_meta` | `uint8` | bit0 valid, bit1 fresh |
+### 3.3 `0x18FF0220` Auto Direct Drive CMD
 
-### 5.7 `0x18FF00C8` Weed Actuator Feedback RX
-- Decoder: `decode_weed_actuator_status()`
-- Byte order: little-endian for position/speed fields (device-native)
+This frame is used only when `0x18FF0210 data[6] bit0` is set to `1`. It bypasses the VCU mixer and carries logical left/right driver inputs. VCU still applies the installation direction signs before sending motor driver commands.
 
-| Byte | Signal | Type | Description |
-|---|---|---|---|
-| 0:1 | `position_x10_mm` | `uint16 (LE)` | position in 0.1 mm |
-| 2 | `current_raw` | `uint8` | current raw (`0.25A/bit`) |
-| 3 | `status_flags` | `uint8` | status bit flags |
-| 4 | `error_code` | `uint8` | actuator error code |
-| 5:6 | `speed_x10_mm_s` | `uint16 (LE)` | speed in 0.1 mm/s |
-| 7 | `input_state` | `uint8` | input state |
+| Byte | Signal | Type | Endian | Range/Unit | Description |
+| ---- | ------ | ---- | ------ | ---------- | ----------- |
+| data[0:1] | `left_driver_input_cmd` | int16 | BE | -2000..2000 recommended | logical left driver direct input |
+| data[2:3] | `right_driver_input_cmd` | int16 | BE | -2000..2000 recommended | logical right driver direct input |
+| data[4:5] | `max_driver_input_cmd` | uint16 | BE | 0..2000 recommended | clamp reference, `0` uses VCU default |
+| data[6:7] | `max_speed_kmh_x100` | uint16 | BE | km/h x 100 | monitor/reference speed, e.g. 300 = 3.00km/h |
 
-## 6. Control Arbitration (Current Code Behavior)
-- STOP priority:
-  1. `upper_force_stop`
-  2. RC emergency stop
-  3. Motor fault/timeout
-- If not STOP:
-  - `upper_force_active=true` -> Upper command active (force select)
-  - else if `rc_ok && rc_enable && rc_remote_automation && upper.valid && upper.automation` -> Upper auto handover active
-  - else if `rc_ok && rc_enable` -> RC command active (default priority)
-  - else -> timeout stop
-- Summary: default control source priority is RC first; Upper is entered only by force or auto handover gate.
-- Weed actuator decision is evaluated in FSM (`weed_fsm_step()`), while `can_tx_thread` only transmits pre-built pending weed frames.
-- Blade command path is handled in FSM by `blade_fsm_step()`:
-  - `blade_cmd_step()` decides target rpm.
-  - `blade_tx_plan_step()` creates 250ms periodic pending frames only when RC B button(`rc_enable`) is ON.
-  - `can_tx_thread` only consumes/transmits pending blade frames.
-- Upper drive timeout: `UPPER_DRIVE_TIMEOUT_MS = 1000 ms`
-- Motor timeout: `MOTOR_TIMEOUT_MS = 500 ms`
-- RC freshness timeout: `SBUS_TIMEOUT_MS = 1000 ms`
+### 3.4 `0x18FF0230` Weed Actuator CMD
 
-Driver OK condition (command execution prerequisite):
-- `motor_left_ok = motor_left.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`
-- `motor_right_ok = motor_right.valid && fresh(MOTOR_TIMEOUT_MS) && (fault_bits == 0)`
-- If either driver is not OK, FSM goes to STOP path (`FSM_STOP_MOTOR_FAULT` or `FSM_STOP_TIMEOUT`) and normal drive command is not maintained.
+| Byte | Signal | Type | Endian | Range/Unit | Description |
+| ---- | ------ | ---- | ------ | ---------- | ----------- |
+| data[0] | `command_type` | uint8 | - | enum | `0=STOP`, `1=SET_TARGET`, `2=MOVE_TO_TARGET` |
+| data[1] | `stage` | uint8 | - | enum | `0=UP`, `1=MID`, `2=DOWN` |
+| data[2:3] | `target_position_mm` | uint16 | BE | 0..200mm | actuator target position |
+| data[4] | `option` | uint8 | - | reserved | send 0 |
+| data[5:7] | Reserved | - | - | - | send 0 |
 
-### 6.1 Timeout Detection Note (Important)
-- Timeout logic is freshness-based (`valid` + elapsed time from last received frame).
-- If a CAN message is **not received periodically**, timeout-based behavior cannot be guaranteed as intended.
-- In other words, periodic reception is a prerequisite; without periodic updates, system behavior may remain on stale state until timeout conditions are actually evaluated by updated timestamps/valid flags.
+Examples:
 
-## 7. Motor Driver Config Rule (Current)
-- Driver `enable_bit` is fixed to default:
-  - `MOTOR_DRV_DEFAULT_ENABLE_BITS` (`0xC3`)
-- Upper does not override `driver_config_bitmask` anymore.
-- Accel is configurable from upper command `0x18FF0210`:
-  - `data[6]`: left accel (`0..255`) -> applied to left axis1/axis2 accel
-  - `data[7]`: right accel (`0..255`) -> applied to right axis1/axis2 accel
-- If upper config is not valid, accel falls back to defaults:
-  - `MOTOR_DRV_DEFAULT_AXIS1_ACC = 0x64`
-  - `MOTOR_DRV_DEFAULT_AXIS2_ACC = 0x64`
+```text
+02 02 00 B4 00 00 00 00  # move to 180mm down
+01 01 00 5A 00 00 00 00  # set 90mm target only
+```
 
-## 8. Open Items / TODO
-- `CANID_UPPER_CMD_RX (0x18FF0210)` comment says TODO; verify final ID assignment with upper controller.
-- `CANID_MOTOR_CMD_DRIVER1_TX`, `CANID_MOTOR_CMD_DRIVER2_TX` comments still marked TODO; verify final production IDs.
-- `power_supply_value` currently uses left motor supply only.
-- Header comments at top of `vcu_gateway.c` still contain old temporary CAN examples and should be synced with current IDs.
+### 3.5 `0x18FF0240` Weed Blade CMD
 
-## 9. Reference Files
+| Byte | Signal | Type | Endian | Range/Unit | Description |
+| ---- | ------ | ---- | ------ | ---------- | ----------- |
+| data[0] | `command_type` | uint8 | - | enum | `0=STOP`, `1=SET_RPM`, `2=RUN` |
+| data[1] | `mode` | uint8 | - | enum | `0=SYNC`, reserved |
+| data[2:3] | `left_blade_rpm` | uint16 | BE | 0..2000rpm | left blade target rpm |
+| data[4:5] | `right_blade_rpm` | uint16 | BE | 0..2000rpm | right blade target rpm |
+| data[6:7] | Reserved | - | - | - | send 0 |
+
+Examples:
+
+```text
+02 00 05 DC 05 DC 00 00  # run left/right 1500rpm
+01 00 05 DC 05 DC 00 00  # set left/right 1500rpm only
+00 00 00 00 00 00 00 00  # stop
+```
+
+## 4. Gateway -> Upper TX Detail
+
+### 4.1 `0x18FF0300` Motor Status RPM
+
+| Byte | Signal | Type | Endian | Unit | Description |
+| ---- | ------ | ---- | ------ | ---- | ----------- |
+| data[0:1] | `driver_left_axis1_rpm` | int16 | BE | rpm | left driver axis1 feedback |
+| data[2:3] | `driver_left_axis2_rpm` | int16 | BE | rpm | left driver axis2 feedback |
+| data[4:5] | `driver_right_axis1_rpm` | int16 | BE | rpm | right driver axis1 feedback |
+| data[6:7] | `driver_right_axis2_rpm` | int16 | BE | rpm | right driver axis2 feedback |
+
+### 4.2 `0x18FF0310` Gateway Status
+
+| Byte | Signal | Type | Endian | Description |
+| ---- | ------ | ---- | ------ | ----------- |
+| data[0:1] | `power_supply_value` | int16 | BE | power supply value |
+| data[2] | `md_left_fault_msg` | uint8 | - | left motor driver fault code |
+| data[3] | `md_right_fault_msg` | uint8 | - | right motor driver fault code |
+| data[4] | `rc_status_mask` | uint8 | - | RC status bit mask |
+| data[5] | `fsm_status_mask` | uint8 | - | FSM status bit mask |
+| data[6] | `relay_st` | uint8 | - | relay status bit mask |
+| data[7] | `timeout_detail_code` | uint8 | - | timeout detail code |
+
+RC status mask:
+
+| Bit | Define | Meaning |
+| --- | ------ | ------- |
+| bit0 | `RC_ST_ENABLE` | RC B button enable |
+| bit1 | `RC_ST_EMERGENCY_STOP` | RC A button E-stop |
+| bit2 | `RC_ST_FAILSAFE` | RC receiver failsafe, disconnected signal |
+| bit3 | `RC_ST_FRESH` | RC data freshness |
+| bit4 | `RC_ST_CULTIVATOR_DOWN` | left toggle, implement down |
+| bit5 | `RC_ST_CULTIVATOR_ON` | right toggle, weeding motor ON |
+| bit6 | `RC_ST_REMOTE_AUTOMATION` | RC D button remote automation |
+| bit7 | `RC_ST_DRIVE_MODE` | RC C button drive mode, `0=agile`, `1=stable` |
+
+FSM status mask:
+
+| Bit | Define | Meaning |
+| --- | ------ | ------- |
+| bit0 | `FSM_ST_MODE_SAFE_STOP` | safe stop state |
+| bit1 | `FSM_ST_MODE_MANUAL_RC` | manual RC control state |
+| bit2 | `FSM_ST_MODE_AUTO_ARMED` | auto mode armed/ready state |
+| bit3 | `FSM_ST_MODE_AUTO_ACTIVE` | actual Upper command auto control state |
+| bit4 | `FSM_ST_STOP_UPPER_FORCE` | Upper force stop occurred |
+| bit5 | `FSM_ST_STOP_RC_EMG` | RC emergency stop occurred |
+| bit6 | `FSM_ST_STOP_MOTOR_FAULT` | motor fault occurred |
+| bit7 | `FSM_ST_STOP_TIMEOUT` | timeout stop occurred |
+
+Timeout detail:
+
+| Value | Define | Meaning |
+| ----- | ------ | ------- |
+| `0` | `TO_NONE` | no timeout |
+| `1` | `TO_RC` | RC timeout |
+| `2` | `TO_UPPER_CFG` | upper config timeout, not used as hard gate currently |
+| `3` | `TO_UPPER_DRIVE` | upper drive command timeout |
+| `4` | `TO_MOTOR_LEFT` | left motor feedback timeout |
+| `5` | `TO_MOTOR_RIGHT` | right motor feedback timeout |
+| `6` | `TO_MULTIPLE` | multiple timeouts |
+| `7` | `TO_UPPER_AUTO` | selected `0x18FF0220` auto direct command timeout |
+
+### 4.3 `0x18FF0320` Weed Actuator Status
+
+| Byte | Signal | Type | Endian | Unit | Description |
+| ---- | ------ | ---- | ------ | ---- | ----------- |
+| data[0] | `actuator_state` | uint8 | - | enum | VCU interpreted actuator summary state |
+| data[1] | `error_code` | uint8 | - | code | actuator raw error code |
+| data[2:3] | `target_position_mm` | uint16 | BE | mm | VCU target position |
+| data[4:5] | `actual_position_mm` | uint16 | BE | mm | actuator feedback position |
+| data[6] | `status_flags` | uint8 | - | bit mask | actuator raw status flags |
+| data[7] | `meta_bits` | uint8 | - | bit mask | VCU interpreted metadata |
+
+Actuator state: `0=UNKNOWN`, `1=HOME`, `2=MOVING_DOWN`, `3=TARGET_REACHED`, `4=MOVING_UP`, `5=POSITION_MISMATCH`, `6=STOPPED`, `7=FAULT`, `8=TIMEOUT`.
+
+Actuator meta bits: bit0 valid, bit1 fresh, bit2 timeout, bit3 moving, bit4 target reached, bit5 command active, bit6 fault.
+
+### 4.4 `0x18FF0330` Weed Blade Status
+
+| Byte | Signal | Type | Endian | Unit | Description |
+| ---- | ------ | ---- | ------ | ---- | ----------- |
+| data[0] | `blade_state` | uint8 | - | enum | VCU interpreted blade summary state |
+| data[1] | `fault_summary` | uint8 | - | bit mask | left/right blade fault summary |
+| data[2:3] | `left_feedback_rpm` | int16 | BE | rpm | left blade feedback rpm |
+| data[4:5] | `right_feedback_rpm` | int16 | BE | rpm | right blade feedback rpm |
+| data[6] | `cmd_rpm_scaled` | uint8 | - | rpm / 10 | current command rpm scaled |
+| data[7] | `meta_bits` | uint8 | - | bit mask | VCU interpreted metadata |
+
+Blade state: `0=UNKNOWN`, `1=STOPPED`, `2=RUNNING`, `3=SET_RPM_ONLY`, `4=FAULT`, `5=TIMEOUT`.
+
+Fault summary: bit0 left fault, bit1 right fault, bit2 any fault.
+
+Blade meta bits: bit0 left valid, bit1 left fresh, bit2 right valid, bit3 right fresh, bit4 running, bit5 command active, bit6 fault.
+
+### 4.5 Test/Debug Vehicle Monitor IDs
+
+`0x18FF4000` Vehicle Motion:
+
+| Byte | Signal | Type | Endian | Scaling |
+| ---- | ------ | ---- | ------ | ------- |
+| data[0:1] | `yaw_deg_0_360_x10` | int16 | BE | deg x 10 |
+| data[2:3] | `yaw_rate_deg_s_x10` | int16 | BE | deg/s x 10 |
+| data[4:5] | `left_speed_m_s_x100` | int16 | BE | m/s x 100 |
+| data[6:7] | `right_speed_m_s_x100` | int16 | BE | m/s x 100 |
+
+`0x18FF4010` Vehicle Monitor:
+
+| Byte | Signal | Type | Endian | Scaling |
+| ---- | ------ | ---- | ------ | ------- |
+| data[0] | `throttle_percent` | int8 | - | -100..100 |
+| data[1] | `steering_percent` | int8 | - | -100..100 |
+| data[2] | `left_cmd_percent` | int8 | - | -100..100 |
+| data[3] | `right_cmd_percent` | int8 | - | -100..100 |
+| data[4:5] | `yaw_rate_deg_s_x10` | int16 | BE | deg/s x 10 |
+| data[6:7] | `center_distance_m_x100` | int16 | BE | m x 100 |
+
+## 5. Control Policy
+
+- Default control source is RC.
+- Upper Auto handover requires RC fresh, RC enable ON, RC remote automation ON, Upper automation ON, and fresh Upper Drive CMD.
+- Stop priority: Upper force stop, RC emergency stop, motor fault/timeout, Upper Drive timeout, RC timeout/no valid source.
+- RC mode uses RC switch values for weed/blade.
+- Auto mode starts from safe defaults and applies valid Upper weed/blade commands only.
+
+## 6. Reference Files
+
 - `user/vcu_gateway.h`
 - `user/vcu_gateway.c`
-
-## 10. Latest Update Note (Enum Integration)
-- FSM/command status enums are now unified under `user/vcu_gateway.h` for centralized management.
-- Unified base enums:
-  - `vcu_control_src_t` (`SRC_NONE`, `SRC_RC`, `SRC_UPPER`)
-  - `vcu_cmd_type_t` (`CMD_STOP`, `CMD_SETPOINT`)
-  - `vcu_stop_reason_t` (`STOP_NONE`, `STOP_UPPER_FORCE`, `STOP_RC_EMG`, `STOP_MOTOR_FAULT`, `STOP_TIMEOUT`)
-- Compatibility is preserved:
-  - Existing names `cmd_src_t`, `cmd_type_t`, `fsm_control_src_t`, `fsm_stop_reason_t` remain as typedef aliases.
-  - Existing labels `FSM_CTRL_SRC_*`, `FSM_STOP_*` remain as compatibility macros.
-- Effect: status/bitmask-related semantics are managed in one header location, reducing mismatch risk between FSM logic and status reporting.
-
-### 10.1 Unified Enum Quick Guide
-- `vcu_control_src_t`: 현재 제어 명령의 주체를 나타냄 (`SRC_NONE`, `SRC_RC`, `SRC_UPPER`).
-- `vcu_upper_cmd_t`: Upper 명령 데이터의 종류를 구분하기 위한 타입 (`UPPER_NONE`, `UPPER_RPM`, `UPPER_CONFIG`).
-- `vcu_cmd_type_t`: 실제 출력 명령 모드 구분 (`CMD_STOP` = 정지, `CMD_SETPOINT` = 목표값 구동).
+- `user/rc_mixer.h`
+- `user/rc_mixer.c`

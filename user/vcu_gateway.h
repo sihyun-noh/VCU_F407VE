@@ -27,7 +27,7 @@ extern "C" {
 
 #define CANID_UPPER_CMD_DRIVE_RX  0x18FF0200u /* upper->gateway drive cmd ID (throttle/steering) */
 #define CANID_UPPER_CMD_CONFIG_RX 0x18FF0210u /* upper->gateway config cmd ID */
-#define CANID_UPPER_CMD_AUTO_RX   0x18FF0220u /* upper->gateway auto cmd ID (linear speed + yaw rate) */
+#define CANID_UPPER_CMD_AUTO_RX   0x18FF0220u /* upper->gateway auto direct cmd ID (left/right direct) */
 #define CANID_UPPER_CMD_WEED_RX   0x18FF0230u /* upper->gateway weed actuator cmd ID */
 #define CANID_UPPER_CMD_BLADE_RX  0x18FF0240u /* upper->gateway weed blade cmd ID */
 
@@ -124,6 +124,14 @@ extern "C" {
 #define WEED_ACTUATOR_TIMEOUT_MS 500u
 #define WEED_ACTUATOR_POS_TOL_MM 3u
 
+/* 0x18FF0210 data[6]: Upper drive command source select.
+ * bit0 = 0: use 0x18FF0200 throttle/steering command (default)
+ * bit0 = 1: use 0x18FF0220 left/right direct command
+ */
+#define UPPER_DRIVE_CMD_SELECT_BIT  (1u << 0)
+#define UPPER_DRIVE_CMD_SELECT_0200 0u
+#define UPPER_DRIVE_CMD_SELECT_0220 1u
+
 /* ===================== Upper Weed/Blade Status Enums ===================== */
 /* 0x18FF0320 data[0]: VCU-interpreted actuator summary state. */
 #define ACT_STATE_UNKNOWN           0u
@@ -176,6 +184,7 @@ extern "C" {
 #define TO_MOTOR_LEFT  (4u)
 #define TO_MOTOR_RIGHT (5u)
 #define TO_MULTIPLE    (6u)
+#define TO_UPPER_AUTO  (7u)
 
 /* RC status bit mask */
 #define RC_ST_ENABLE            (1u << 0) /* rc_enable */
