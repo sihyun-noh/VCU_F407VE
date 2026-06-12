@@ -429,6 +429,7 @@ STOP 조건은 일반 주행 명령보다 우선한다.
 
 - RC mode에서는 RC switch 값으로 actuator/blade 목표를 만든다.
 - Auto mode에서는 안전 기본값에서 시작한 뒤, 유효한 Upper weed/blade CMD가 있을 때만 해당 값을 사용한다.
+- 작업기 명령(`0x18FF0230` actuator, `0x18FF0240` blade)은 바퀴 모터 드라이버 fault/timeout과 분리해서 동작한다. 단, RC fresh/enable이 필요하며 RC E-stop / Upper force stop은 그대로 따른다.
 - actuator/blade status는 각각 `0x18FF0320`, `0x18FF0330`으로 200ms 주기로 보고한다.
 
 ## 6. Implementation Checklist for Upper Controller

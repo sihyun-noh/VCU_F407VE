@@ -2,6 +2,12 @@
 
 ## 2026-06-12 업데이트
 
+### Work-tool Wheel Motor Fault 분리
+- Actuator와 blade run permission을 wheel motor driver fault/timeout 상태와 분리.
+- 공통 안전 게이트는 유지: RC fresh, RC B enable, RC E-stop OFF, Upper force stop OFF.
+- 목적: 바퀴 드라이버가 정지/timeout/fault 상태여도 actuator/blade 단독 테스트와 작업기 동작이 가능하도록 함.
+
+
 ### Blade Accel Upper CMD 연동
 - `0x18FF0240 data[6]`을 `blade_accel`로 정의.
   - `0`: VCU 기본값 `BLADE_CMD_ACCEL` 사용

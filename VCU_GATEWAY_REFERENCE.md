@@ -194,6 +194,15 @@
 - `motor_right_ok = valid && fresh(MOTOR_TIMEOUT_MS) && fault_bits==0`
 - 하나라도 실패 시 STOP 경로
 
+### Work-tool 독립 동작 정책
+- Actuator(`0x18FF0230`)와 blade(`0x18FF0240`) 명령은 wheel motor driver fault/timeout과 분리해서 동작한다.
+- 공통 안전 게이트는 유지한다:
+  - RC fresh
+  - RC B enable
+  - RC E-stop OFF
+  - Upper force stop OFF
+- 따라서 바퀴 드라이버가 timeout/fault 상태여도 작업기 단독 테스트와 동작이 가능하다.
+
 ## 6) 모터 설정 정책
 - 본 시스템은 모터를 직접 제어하지 않고 **motor driver**를 통해 제어합니다.
 - 각 driver는 **2개 축(axis1, axis2) 출력**을 가집니다.

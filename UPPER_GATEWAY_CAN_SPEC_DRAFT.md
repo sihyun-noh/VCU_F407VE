@@ -291,6 +291,7 @@ Blade meta bits: bit0 left valid, bit1 left fresh, bit2 right valid, bit3 right 
 - Stop priority: Upper force stop, RC emergency stop, motor fault/timeout, Upper Drive timeout, RC timeout/no valid source.
 - RC mode uses RC switch values for weed/blade.
 - Auto mode starts from safe defaults and applies valid Upper weed/blade commands only.
+- Work-tool commands (`0x18FF0230` actuator, `0x18FF0240` blade) are separated from wheel motor driver fault/timeout. They still require RC fresh/enable and honor RC E-stop / Upper force stop.
 
 ## 6. Reference Files
 

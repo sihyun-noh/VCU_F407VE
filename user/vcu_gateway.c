@@ -1377,18 +1377,15 @@ static uint32_t tick_to_ms(rt_tick_t now, rt_tick_t start_tick) {
 }
 
 /* Blade command decision:
- * - RC CH6 stage(0/250/500rpm) 기반으로 blade 목표 rpm을 계산
- * - FSM STOP/timeout/fault 조건이면 rpm=0으로 강제
- * - 실제 CAN 송신 주기 제어는 TX thread가 담당(250ms periodic)
+ * - Blade is intentionally separated from wheel motor driver STOP/fault state.
+ * - Safety gates such as RC enable, RC E-stop, and Upper force stop are applied
+ *   by the caller through run_allowed.
+ * - Actual CAN TX period control is handled by the TX thread (250ms periodic).
  */
-static void blade_cmd_step(bool cmd_active, uint16_t blade_rpm_cmd, uint8_t blade_accel_cmd, const upper_status_t* st,
+static void blade_cmd_step(bool cmd_active, bool run_allowed, uint16_t blade_rpm_cmd, uint8_t blade_accel_cmd,
                            blade_cmd_t* out) {
-  bool run_allowed;
-
-  if (!st || !out)
+  if (!out)
     return;
-
-  run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
 
   out->requested_rpm_cmd = blade_rpm_cmd;
   out->requested_accel_cmd = normalize_blade_accel(blade_accel_cmd);
@@ -1429,13 +1426,13 @@ static void blade_tx_plan_step(rt_tick_t now, bool blade_tx_enable, uint16_t bla
  * 1) decide blade target rpm from current control context
  * 2) build periodic TX pending plan (enabled only by RC B button)
  */
-static void blade_fsm_step(rt_tick_t now, bool blade_tx_enable, bool cmd_active, uint16_t blade_rpm_cmd,
-                           uint8_t blade_accel_cmd, const upper_status_t* st, blade_cmd_t* cmd,
+static void blade_fsm_step(rt_tick_t now, bool blade_tx_enable, bool cmd_active, bool run_allowed,
+                           uint16_t blade_rpm_cmd, uint8_t blade_accel_cmd, blade_cmd_t* cmd,
                            blade_tx_plan_t* plan) {
-  if (!st || !cmd || !plan)
+  if (!cmd || !plan)
     return;
 
-  blade_cmd_step(cmd_active, blade_rpm_cmd, blade_accel_cmd, st, cmd);
+  blade_cmd_step(cmd_active, run_allowed, blade_rpm_cmd, blade_accel_cmd, cmd);
   blade_tx_plan_step(now, blade_tx_enable, cmd->rpm_cmd, cmd->accel_cmd, plan);
 }
 
@@ -1445,10 +1442,9 @@ static void blade_fsm_step(rt_tick_t now, bool blade_tx_enable, bool cmd_active,
  * - 실제 위치가 목표 근처에 도달하면 pre를 재무장(re-arm)
  *   -> 다음 목표 변경 시 다시 pre부터 시작
  */
-static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested, uint16_t weed_target_mm,
-                                         const upper_status_t* st, const weed_actuator_status_t* ws,
+static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested, bool run_allowed,
+                                         uint16_t weed_target_mm, const weed_actuator_status_t* ws,
                                          weed_tx_plan_t* plan) {
-  bool run_allowed;
   bool weed_rx_fresh;
   bool weed_pos_reached = false;
   bool weed_pos_in_hold_db = false;
@@ -1456,10 +1452,9 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
   uint16_t weed_pos_mm = 0;
   uint16_t target_diff_mm = 0;
 
-  if (!st || !ws || !plan)
+  if (!ws || !plan)
     return;
 
-  run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
   weed_rx_fresh = ws->valid && is_fresh_tick(now, ws->ts, WEED_ACTUATOR_TIMEOUT_MS);
   plan->target_mm = weed_target_mm;
   plan->pre_sent = g_weed_fsm_ctx.pre_sent;
@@ -1547,9 +1542,8 @@ static void weed_fsm_step_position_based(rt_tick_t now, bool actuator_requested,
  * - 5초 내 새 트리거가 들어오면 윈도우를 다시 시작
  * - 위치 피드백은 모니터링/timeout 판단만 사용, 송신 중단 판단은 시간 기준
  */
-static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uint16_t weed_target_mm,
-                                     const upper_status_t* st, const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
-  bool run_allowed;
+static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, bool run_allowed, uint16_t weed_target_mm,
+                                     const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
   bool weed_rx_fresh;
   bool target_changed = false;
   bool move_window_active = false;
@@ -1560,10 +1554,9 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
   uint16_t target_diff_mm = 0;
   uint16_t weed_pos_mm = 0;
 
-  if (!st || !ws || !plan)
+  if (!ws || !plan)
     return;
 
-  run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
   weed_rx_fresh = ws->valid && is_fresh_tick(now, ws->ts, WEED_ACTUATOR_TIMEOUT_MS);
   if (weed_rx_fresh) {
     uint16_t diff_mm;
@@ -1713,12 +1706,12 @@ static void weed_fsm_step_time_based(rt_tick_t now, bool actuator_requested, uin
  * WEED_FSM_MODE로 위치기반/시간기반 중 하나를 선택한다.
  * 기본값은 위치기반(POSITION_BASED)이라 기존 동작이 유지된다.
  */
-static void weed_fsm_step(rt_tick_t now, bool actuator_requested, uint16_t weed_target_mm, const upper_status_t* st,
+static void weed_fsm_step(rt_tick_t now, bool actuator_requested, bool run_allowed, uint16_t weed_target_mm,
                           const weed_actuator_status_t* ws, weed_tx_plan_t* plan) {
 #if (WEED_FSM_MODE == WEED_FSM_MODE_TIME_BASED)
-  weed_fsm_step_time_based(now, actuator_requested, weed_target_mm, st, ws, plan);
+  weed_fsm_step_time_based(now, actuator_requested, run_allowed, weed_target_mm, ws, plan);
 #else
-  weed_fsm_step_position_based(now, actuator_requested, weed_target_mm, st, ws, plan);
+  weed_fsm_step_position_based(now, actuator_requested, run_allowed, weed_target_mm, ws, plan);
 #endif
 }
 
@@ -1956,6 +1949,7 @@ static void fsm_thread_entry(void* parameter) {
     uint16_t weed_target_selected = weed_upper_active ? upper_weed_target_mm : rc.weed_target_mm;
     uint16_t blade_rpm_selected = weed_upper_active ? upper_blade_rpm_cmd : rc.blade_rpm_cmd;
     uint8_t blade_accel_selected = weed_upper_active ? upper_blade_accel_cmd : BLADE_CMD_ACCEL;
+    bool work_tool_run_allowed = (rc_ok && rc.rc_enable && !rc_emg && !upper_force_stop);
 
     /* Left motor driver cmd */
     motor_cmd_t out_cmd_left;
@@ -2173,11 +2167,17 @@ static void fsm_thread_entry(void* parameter) {
      */
     update_motion_monitor(&motion_monitor, now, out_cmd_left.rpm_axis1, (int16_t)(-out_cmd_right.rpm_axis1));
 
-    /* Weed FSM step: decide pre/periodic actuator commands and status meta. */
-    weed_fsm_step(now, weed_cmd_active, weed_target_selected, &out_st, &weed_st, &weed_plan);
-    /* Blade FSM step: rpm decision + periodic pending generation(RC B enable gate). */
-    blade_fsm_step(now, rc.rc_enable, blade_cmd_active, blade_rpm_selected, blade_accel_selected, &out_st, &blade_cmd,
-                   &blade_plan);
+    /* Weed FSM step:
+     * Actuator run permission is separated from wheel motor driver fault/timeout.
+     * It still requires RC freshness/enable and honors RC E-stop / Upper force stop.
+     */
+    weed_fsm_step(now, weed_cmd_active, work_tool_run_allowed, weed_target_selected, &weed_st, &weed_plan);
+    /* Blade FSM step:
+     * Blade run permission is separated from wheel motor driver fault/timeout.
+     * It still requires RC freshness/enable and honors RC E-stop / Upper force stop.
+     */
+    blade_fsm_step(now, rc.rc_enable, blade_cmd_active, work_tool_run_allowed, blade_rpm_selected, blade_accel_selected,
+                   &blade_cmd, &blade_plan);
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);

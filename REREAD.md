@@ -10,6 +10,7 @@
 - 내부:
   - `sbus_thread` -> RC intent 업데이트
   - `fsm_thread` -> 우선순위 판단 + 모터 명령/상태 생성
+  - Work-tool(actuator/blade) 명령은 wheel motor driver fault/timeout과 분리 동작, RC fresh/enable 및 E-stop/force stop은 공통 안전 게이트로 유지
   - `canrx`/`cantx` 분리 스레드 -> 수신 지연 최소화
 - 출력:
   - Driver1/2 명령 송신
