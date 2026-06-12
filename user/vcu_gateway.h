@@ -62,16 +62,17 @@ extern "C" {
 #define BLADE_RPM_STAGE_LOW  0u
 #define BLADE_RPM_STAGE_MID  750u
 #define BLADE_RPM_STAGE_HIGH 1500u
+
 /* Blade command clamp max (blade path only; independent from drive max 664). */
 #define BLADE_RPM_CMD_MAX 2000u
 
 /* Blade command constants */
 #define BLADE_CMD_ENABLE_BITS MOTOR_DRV_DEFAULT_ENABLE_BITS
-#define BLADE_CMD_ACCEL       0x64u
+#define BLADE_CMD_ACCEL       0xau
 
 /* CH5 mapped actuator target in mm (meaning-oriented naming). */
 #define WEED_POS_DOWN_MM 160u
-#define WEED_POS_MID_MM  80u
+#define WEED_POS_MID_MM  130u
 #define WEED_POS_UP_MM   0u
 
 /* Upper weed actuator command_type (0x18FF0230 data[0]) */

@@ -979,8 +979,8 @@ static void pack_blade_cmd_frame(bool left_side, uint16_t rpm_cmd, uint8_t out[8
   blade_cmd.axis2_accel_bit = BLADE_CMD_ACCEL;
 
   if (left_side) {
-    blade_cmd.rpm_axis1 = rpm;
-    blade_cmd.rpm_axis2 = rpm;
+    blade_cmd.rpm_axis1 = -rpm;
+    blade_cmd.rpm_axis2 = -rpm;
   } else {
     blade_cmd.rpm_axis1 = rpm;
     blade_cmd.rpm_axis2 = 0;
