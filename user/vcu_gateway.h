@@ -68,7 +68,9 @@ extern "C" {
 
 /* Blade command constants */
 #define BLADE_CMD_ENABLE_BITS MOTOR_DRV_DEFAULT_ENABLE_BITS
-#define BLADE_CMD_ACCEL       0xau
+#define BLADE_CMD_ACCEL       0x0Au /* default blade accel when Upper data[6] is 0 or RC mode is used */
+#define BLADE_CMD_ACCEL_MIN   5u
+#define BLADE_CMD_ACCEL_MAX   20u
 
 /* CH5 mapped actuator target in mm (meaning-oriented naming). */
 #define WEED_POS_DOWN_MM 160u

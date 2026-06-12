@@ -157,13 +157,14 @@ Examples:
 | data[1] | `mode` | uint8 | - | enum | `0=SYNC`, reserved |
 | data[2:3] | `left_blade_rpm` | uint16 | BE | 0..2000rpm | left blade target rpm |
 | data[4:5] | `right_blade_rpm` | uint16 | BE | 0..2000rpm | right blade target rpm |
-| data[6:7] | Reserved | - | - | - | send 0 |
+| data[6] | `blade_accel` | uint8 | - | 0 or 5..20 | `0`=VCU default, otherwise clamped to 5..20 |
+| data[7] | Reserved | - | - | - | send 0 |
 
 Examples:
 
 ```text
-02 00 05 DC 05 DC 00 00  # run left/right 1500rpm
-01 00 05 DC 05 DC 00 00  # set left/right 1500rpm only
+02 00 05 DC 05 DC 0A 00  # run left/right 1500rpm, accel=10
+01 00 05 DC 05 DC 0A 00  # set left/right 1500rpm only, accel=10
 00 00 00 00 00 00 00 00  # stop
 ```
 

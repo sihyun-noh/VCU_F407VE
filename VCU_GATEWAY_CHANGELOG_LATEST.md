@@ -1,5 +1,14 @@
 # VCU Gateway 최근 변경 요약 (최신)
 
+## 2026-06-12 업데이트
+
+### Blade Accel Upper CMD 연동
+- `0x18FF0240 data[6]`을 `blade_accel`로 정의.
+  - `0`: VCU 기본값 `BLADE_CMD_ACCEL` 사용
+  - `5..20`: 해당 범위로 clamp 후 blade command accel 적용
+- RC 모드에서는 기존 기본 accel을 유지하고, Upper auto 모드에서만 상위제어기 accel 값을 적용.
+- `pack_blade_cmd_frame()`까지 accel 전달 경로를 연결하여 실제 blade CAN TX payload에 반영.
+
 ## 0. 2026-04-05 업데이트
 
 ### 0.1 RC Mixer 민첩형(Dex) 확장 추가
@@ -312,4 +321,3 @@
     - `weed_fsm_step_time_based()`
 - 목적:
   - 목표값 미세 변동(예: 10~50mm 바운스)으로 인한 불필요한 재트리거/시퀀스 재시작 억제
-

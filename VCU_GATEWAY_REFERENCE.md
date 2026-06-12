@@ -136,6 +136,8 @@
   - `data[1]` `mode` (`0 SYNC`)
   - `data[2:3]` `left_blade_rpm` (`uint16`)
   - `data[4:5]` `right_blade_rpm` (`uint16`)
+  - `data[6]` `blade_accel` (`0`=default, otherwise clamp 5..20)
+  - `data[7]` reserved
 - `0x18FF0021` left motor status
 - `0x18FF0020` right motor status
 - `0x18FF00C8` weed actuator feedback

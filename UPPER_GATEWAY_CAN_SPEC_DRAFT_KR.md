@@ -212,7 +212,8 @@ blade RPM 설정, RUN, STOP을 담당한다.
 | data[1] | `mode` | uint8 | - | enum | `0=SYNC`, 추후 확장 |
 | data[2:3] | `left_blade_rpm` | uint16 | BE | 0 ~ 2000rpm | left blade 목표 rpm |
 | data[4:5] | `right_blade_rpm` | uint16 | BE | 0 ~ 2000rpm | right blade 목표 rpm |
-| data[6:7] | Reserved | - | - | - | 0 권장 |
+| data[6] | `blade_accel` | uint8 | - | 0 또는 5 ~ 20 | `0`=VCU 기본값, 그 외 5~20으로 clamp |
+| data[7] | Reserved | - | - | - | 0 권장 |
 
 Command type:
 
@@ -225,13 +226,13 @@ Command type:
 예시, 좌/우 1500rpm RUN:
 
 ```text
-02 00 05 DC 05 DC 00 00
+02 00 05 DC 05 DC 0A 00
 ```
 
 예시, 좌/우 1500rpm 설정만 저장:
 
 ```text
-01 00 05 DC 05 DC 00 00
+01 00 05 DC 05 DC 0A 00
 ```
 
 예시, blade STOP:

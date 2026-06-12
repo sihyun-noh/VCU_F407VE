@@ -134,4 +134,4 @@
 - `0x18FF0200`: Upper drive cmd (`throttle/steering + runtime max`)
 - `0x18FF0210`: Upper config (`automation + force stop + force active + relay + accel`)
 - `0x18FF0230`: Upper weed actuator cmd (`command_type + target_position_mm`)
-- `0x18FF0240`: Upper weed blade cmd (`command_type + left/right rpm`)
+- `0x18FF0240`: Upper weed blade cmd (`command_type + left/right rpm + blade_accel`)

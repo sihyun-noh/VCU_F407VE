@@ -5,7 +5,7 @@
 ## 핵심 구조
 - 입력:
   - SBUS (`CH3 throttle`, `CH1 steering`)
-  - Upper CMD CAN (`0x18FF0200` 주행, `0x18FF0210` 설정, `0x18FF0230` actuator, `0x18FF0240` blade)
+  - Upper CMD CAN (`0x18FF0200` 주행, `0x18FF0210` 설정, `0x18FF0230` actuator, `0x18FF0240` blade/rpm/accel)
   - Motor Driver 상태 CAN (left/right status)
 - 내부:
   - `sbus_thread` -> RC intent 업데이트

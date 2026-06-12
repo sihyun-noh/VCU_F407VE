@@ -56,12 +56,12 @@ typedef struct {
 typedef struct {
   rt_tick_t ts;
   bool valid;
-  bool automation;         /* data[0]: upper automation gate */
-  bool upper_force_stop;   /* data[1]: E-stop */
-  bool upper_force_active; /* data[2]: force upper mode */
-  uint8_t relay_mask;      /* data[3] */
-  uint8_t left_accel_cmd;  /* data[4]: left accel (0..255) */
-  uint8_t right_accel_cmd; /* data[5]: right accel (0..255) */
+  bool automation;                /* data[0]: upper automation gate */
+  bool upper_force_stop;          /* data[1]: E-stop */
+  bool upper_force_active;        /* data[2]: force upper mode */
+  uint8_t relay_mask;             /* data[3] */
+  uint8_t left_accel_cmd;         /* data[4]: left accel (0..255) */
+  uint8_t right_accel_cmd;        /* data[5]: right accel (0..255) */
   uint8_t upper_drive_cmd_select; /* data[6] bit0: 0=0x18FF0200, 1=0x18FF0220 */
 } upper_intent_t;
 
@@ -99,6 +99,7 @@ typedef struct {
   uint8_t mode;           /* data[1]: 0 sync */
   uint16_t left_rpm_cmd;  /* data[2:3], uint16 BE */
   uint16_t right_rpm_cmd; /* data[4:5], uint16 BE */
+  uint8_t blade_accel;    /* data[6], 0=default, otherwise clamped to BLADE_CMD_ACCEL_MIN..MAX */
 } upper_blade_cmd_t;
 
 typedef struct {
@@ -171,6 +172,8 @@ typedef struct {
 typedef struct {
   uint16_t rpm_cmd;           /* actual blade TX rpm command */
   uint16_t requested_rpm_cmd; /* selected rpm before run/stop gating */
+  uint8_t accel_cmd;          /* actual blade TX accel command */
+  uint8_t requested_accel_cmd; /* selected accel before run/stop gating */
   bool command_active;        /* true when blade run command is currently active */
 } blade_cmd_t;
 
@@ -771,9 +774,8 @@ static bool decode_upper_cmd(const can_frame_t* rx, upper_intent_t* out) {
   out->relay_mask = (uint8_t)rx->data[3];
   out->left_accel_cmd = (uint8_t)rx->data[4];
   out->right_accel_cmd = (uint8_t)rx->data[5];
-  out->upper_drive_cmd_select = ((rx->data[6] & UPPER_DRIVE_CMD_SELECT_BIT) != 0u)
-                                    ? UPPER_DRIVE_CMD_SELECT_0220
-                                    : UPPER_DRIVE_CMD_SELECT_0200;
+  out->upper_drive_cmd_select =
+      ((rx->data[6] & UPPER_DRIVE_CMD_SELECT_BIT) != 0u) ? UPPER_DRIVE_CMD_SELECT_0220 : UPPER_DRIVE_CMD_SELECT_0200;
 
   return true;
 }
@@ -819,7 +821,8 @@ static bool decode_upper_blade_cmd(const can_frame_t* rx, upper_blade_cmd_t* out
    * data[1]   : mode (0 sync)
    * data[2:3] : left_blade_rpm (uint16 BE, 0..2000)
    * data[4:5] : right_blade_rpm (uint16 BE, 0..2000)
-   * data[6:7] : reserved
+   * data[6] : blade acceleration, 0=default, otherwise range 5..20
+   * data[7] : reserved
    */
   out->command_type = rx->data[0];
   out->mode = rx->data[1];
@@ -827,6 +830,7 @@ static bool decode_upper_blade_cmd(const can_frame_t* rx, upper_blade_cmd_t* out
   out->right_rpm_cmd = (uint16_t)(((uint16_t)rx->data[4] << 8) | (uint16_t)rx->data[5]);
   out->left_rpm_cmd = (uint16_t)clamp_i32((int32_t)out->left_rpm_cmd, 0, BLADE_RPM_CMD_MAX);
   out->right_rpm_cmd = (uint16_t)clamp_i32((int32_t)out->right_rpm_cmd, 0, BLADE_RPM_CMD_MAX);
+  out->blade_accel = rx->data[6];
 
   return true;
 }
@@ -965,18 +969,26 @@ static void pack_motor_cmd(const motor_cmd_t* cmd, uint8_t out[8]) {
   out[7] = (uint8_t)(0x00);
 }
 
+static uint8_t normalize_blade_accel(uint8_t accel_cmd) {
+  if (accel_cmd == 0u)
+    return BLADE_CMD_ACCEL;
+  return (uint8_t)clamp_i32((int32_t)accel_cmd, BLADE_CMD_ACCEL_MIN, BLADE_CMD_ACCEL_MAX);
+}
+
 /* Blade command payload:
  * - left blade : single-axis valid (axis1=rpm, axis2=0)
  * - right blade: dual-axis same rpm (axis1=axis2=rpm)
  */
-static void pack_blade_cmd_frame(bool left_side, uint16_t rpm_cmd, uint8_t out[8]) {
+static void pack_blade_cmd_frame(bool left_side, uint16_t rpm_cmd, uint8_t accel_cmd, uint8_t out[8]) {
   motor_cmd_t blade_cmd;
   int16_t rpm = (int16_t)clamp_i32((int32_t)rpm_cmd, 0, BLADE_RPM_CMD_MAX);
+  uint8_t accel = normalize_blade_accel(accel_cmd);
 
   memset(&blade_cmd, 0, sizeof(blade_cmd));
   blade_cmd.enable_bit = BLADE_CMD_ENABLE_BITS;
-  blade_cmd.axis1_accel_bit = BLADE_CMD_ACCEL;
-  blade_cmd.axis2_accel_bit = BLADE_CMD_ACCEL;
+
+  blade_cmd.axis1_accel_bit = accel;
+  blade_cmd.axis2_accel_bit = accel;
 
   if (left_side) {
     blade_cmd.rpm_axis1 = -rpm;
@@ -1369,7 +1381,8 @@ static uint32_t tick_to_ms(rt_tick_t now, rt_tick_t start_tick) {
  * - FSM STOP/timeout/fault 조건이면 rpm=0으로 강제
  * - 실제 CAN 송신 주기 제어는 TX thread가 담당(250ms periodic)
  */
-static void blade_cmd_step(bool cmd_active, uint16_t blade_rpm_cmd, const upper_status_t* st, blade_cmd_t* out) {
+static void blade_cmd_step(bool cmd_active, uint16_t blade_rpm_cmd, uint8_t blade_accel_cmd, const upper_status_t* st,
+                           blade_cmd_t* out) {
   bool run_allowed;
 
   if (!st || !out)
@@ -1378,14 +1391,17 @@ static void blade_cmd_step(bool cmd_active, uint16_t blade_rpm_cmd, const upper_
   run_allowed = (st->control_src != FSM_CTRL_SRC_STOP) && (st->stop_reason == FSM_STOP_REASON_NONE);
 
   out->requested_rpm_cmd = blade_rpm_cmd;
+  out->requested_accel_cmd = normalize_blade_accel(blade_accel_cmd);
   out->command_active = (cmd_active && run_allowed);
   out->rpm_cmd = out->command_active ? blade_rpm_cmd : 0u;
+  out->accel_cmd = out->requested_accel_cmd;
 }
 
 /* Build blade TX pending plan in FSM, TX thread only sends pending frames.
  * Policy: send periodic blade commands only when RC B button(enable) is ON.
  */
-static void blade_tx_plan_step(rt_tick_t now, bool blade_tx_enable, uint16_t blade_rpm_cmd, blade_tx_plan_t* plan) {
+static void blade_tx_plan_step(rt_tick_t now, bool blade_tx_enable, uint16_t blade_rpm_cmd, uint8_t blade_accel_cmd,
+                               blade_tx_plan_t* plan) {
   static rt_tick_t last_blade_tx_tick = 0;
   if (plan == RT_NULL)
     return;
@@ -1400,11 +1416,11 @@ static void blade_tx_plan_step(rt_tick_t now, bool blade_tx_enable, uint16_t bla
   if (!weed_period_elapsed(now, &last_blade_tx_tick, BLADE_TX_PERIOD_MS))
     return;
 
-  pack_blade_cmd_frame(true, blade_rpm_cmd, plan->left_frame);
+  pack_blade_cmd_frame(true, blade_rpm_cmd, blade_accel_cmd, plan->left_frame);
   plan->left_dlc = 8;
   plan->left_pending = true;
 
-  pack_blade_cmd_frame(false, blade_rpm_cmd, plan->right_frame);
+  pack_blade_cmd_frame(false, blade_rpm_cmd, blade_accel_cmd, plan->right_frame);
   plan->right_dlc = 8;
   plan->right_pending = true;
 }
@@ -1414,12 +1430,13 @@ static void blade_tx_plan_step(rt_tick_t now, bool blade_tx_enable, uint16_t bla
  * 2) build periodic TX pending plan (enabled only by RC B button)
  */
 static void blade_fsm_step(rt_tick_t now, bool blade_tx_enable, bool cmd_active, uint16_t blade_rpm_cmd,
-                           const upper_status_t* st, blade_cmd_t* cmd, blade_tx_plan_t* plan) {
+                           uint8_t blade_accel_cmd, const upper_status_t* st, blade_cmd_t* cmd,
+                           blade_tx_plan_t* plan) {
   if (!st || !cmd || !plan)
     return;
 
-  blade_cmd_step(cmd_active, blade_rpm_cmd, st, cmd);
-  blade_tx_plan_step(now, blade_tx_enable, cmd->rpm_cmd, plan);
+  blade_cmd_step(cmd_active, blade_rpm_cmd, blade_accel_cmd, st, cmd);
+  blade_tx_plan_step(now, blade_tx_enable, cmd->rpm_cmd, cmd->accel_cmd, plan);
 }
 
 /* 위치기반 Weed FSM (기존 로직 유지):
@@ -1724,17 +1741,19 @@ static bool select_upper_weed_target(const upper_weed_cmd_t* cmd, uint16_t* targ
   return (cmd->command_type == UPPER_WEED_CMD_MOVE_TO_TARGET);
 }
 
-static bool select_upper_blade_rpm(const upper_blade_cmd_t* cmd, uint16_t* rpm_cmd) {
+static bool select_upper_blade_cmd(const upper_blade_cmd_t* cmd, uint16_t* rpm_cmd, uint8_t* accel_cmd) {
   uint32_t rpm_avg = 0u;
 
-  if (!cmd || !cmd->valid || !rpm_cmd)
+  if (!cmd || !cmd->valid || !rpm_cmd || !accel_cmd)
     return false;
 
   rpm_avg = ((uint32_t)cmd->left_rpm_cmd + (uint32_t)cmd->right_rpm_cmd) / 2u;
   *rpm_cmd = (uint16_t)clamp_i32((int32_t)rpm_avg, 0, BLADE_RPM_CMD_MAX);
+  *accel_cmd = normalize_blade_accel(cmd->blade_accel);
 
   /* Current blade TX path uses one synchronized RPM command for left/right.
    * SET_RPM stores the selected value; RUN makes the command active.
+   * data[6] accel is used only in Upper auto mode; 0 means default accel.
    */
   return (cmd->command_type == UPPER_BLADE_CMD_RUN);
 }
@@ -1929,12 +1948,14 @@ static void fsm_thread_entry(void* parameter) {
     bool weed_upper_active = upper_auto_ready;
     uint16_t upper_weed_target_mm = WEED_POS_UP_MM;
     uint16_t upper_blade_rpm_cmd = 0u;
+    uint8_t upper_blade_accel_cmd = BLADE_CMD_ACCEL;
     bool upper_weed_cmd_active = select_upper_weed_target(&upper_weed, &upper_weed_target_mm);
-    bool upper_blade_cmd_active = select_upper_blade_rpm(&upper_blade, &upper_blade_rpm_cmd);
+    bool upper_blade_cmd_active = select_upper_blade_cmd(&upper_blade, &upper_blade_rpm_cmd, &upper_blade_accel_cmd);
     bool weed_cmd_active = weed_upper_active ? upper_weed_cmd_active : rc_active;
     bool blade_cmd_active = weed_upper_active ? upper_blade_cmd_active : rc_active;
     uint16_t weed_target_selected = weed_upper_active ? upper_weed_target_mm : rc.weed_target_mm;
     uint16_t blade_rpm_selected = weed_upper_active ? upper_blade_rpm_cmd : rc.blade_rpm_cmd;
+    uint8_t blade_accel_selected = weed_upper_active ? upper_blade_accel_cmd : BLADE_CMD_ACCEL;
 
     /* Left motor driver cmd */
     motor_cmd_t out_cmd_left;
@@ -2098,10 +2119,9 @@ static void fsm_thread_entry(void* parameter) {
         out_cmd_right.type = CMD_STOP;
         out_st.control_src = FSM_CTRL_SRC_STOP;
         out_st.stop_reason = FSM_STOP_TIMEOUT;
-        out_st.timeout_detail_code =
-            make_timeout_detail_code(rc_timeout, false, upper_drive_timeout,
-                                     use_upper_auto_direct ? TO_UPPER_AUTO : TO_UPPER_DRIVE, motor_left_timeout,
-                                     motor_right_timeout);
+        out_st.timeout_detail_code = make_timeout_detail_code(rc_timeout, false, upper_drive_timeout,
+                                                              use_upper_auto_direct ? TO_UPPER_AUTO : TO_UPPER_DRIVE,
+                                                              motor_left_timeout, motor_right_timeout);
       }
     }
 
@@ -2156,7 +2176,8 @@ static void fsm_thread_entry(void* parameter) {
     /* Weed FSM step: decide pre/periodic actuator commands and status meta. */
     weed_fsm_step(now, weed_cmd_active, weed_target_selected, &out_st, &weed_st, &weed_plan);
     /* Blade FSM step: rpm decision + periodic pending generation(RC B enable gate). */
-    blade_fsm_step(now, rc.rc_enable, blade_cmd_active, blade_rpm_selected, &out_st, &blade_cmd, &blade_plan);
+    blade_fsm_step(now, rc.rc_enable, blade_cmd_active, blade_rpm_selected, blade_accel_selected, &out_st, &blade_cmd,
+                   &blade_plan);
 
     /*add to registry with cmd & status */
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
