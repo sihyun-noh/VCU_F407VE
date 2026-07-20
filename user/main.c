@@ -9,6 +9,8 @@
 
 #include "rtthread.h"
 #include "main.h"
+#include "board.h"
+#include "spi.h"
 #include "vcu_gateway.h"
 
 /* Optional board/module bring-up switches.
@@ -38,6 +40,18 @@
  * behind compile-time switches to avoid unexpected EEPROM writes, duplicate
  * peripheral use, or legacy test traffic during product boot.
  */
+
+/* Legacy UART/RS485 interrupt handlers still share this receive scratch value.
+*
+*/
+uint16_t RecData = 0u;
+extern int8_t flag;
+extern int8_t RS485_3_flag;
+extern int8_t RS232_2_flag;
+extern int8_t RS232_1_flag;
+
+
+
 static void main_start_optional_modules(void) {
 #if MAIN_ENABLE_BATTERY_THREAD
   (void)bsp_battery_thread();
