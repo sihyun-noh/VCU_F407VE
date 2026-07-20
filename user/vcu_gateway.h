@@ -22,6 +22,7 @@ extern "C" {
 #define CANID_UPPER_STATUS_TX         0x18FF0310u /* upper feedback: vcu gateway status */
 #define CANID_UPPER_WEED_STATUS_TX    0x18FF0320u /* upper feedback: weed actuator status */
 #define CANID_UPPER_BLADE_STATUS_TX   0x18FF0330u /* upper feedback: blade status */
+#define CANID_UPPER_TOOL_CONFIG_TX     0x18FF0340u /* upper feedback: persisted work-tool config status */
 #define CANID_UPPER_VEHICLE_STATUS_TX 0x18FF4000u /* upper monitor/test: vehicle motion status */
 #define CANID_UPPER_VEHICLE_MON_TX    0x18FF4010u /* upper monitor/test: vehicle debug status */
 
@@ -30,6 +31,7 @@ extern "C" {
 #define CANID_UPPER_CMD_AUTO_RX   0x18FF0220u /* upper->gateway auto direct cmd ID (left/right direct) */
 #define CANID_UPPER_CMD_WEED_RX   0x18FF0230u /* upper->gateway weed actuator cmd ID */
 #define CANID_UPPER_CMD_BLADE_RX  0x18FF0240u /* upper->gateway weed blade cmd ID */
+#define CANID_UPPER_CMD_TOOL_CONFIG_RX 0x18FF0250u /* upper->gateway persisted work-tool config cmd ID */
 
 #define CANID_MOTOR_CMD_DRIVER1_TX    0x18FF2100u /* TODO: set to real gateway->motor cmd ID FOR LEFT */
 #define CANID_MOTOR_CMD_DRIVER2_TX    0x18FF2000u /* TODO: set to real gateway->motor cmd ID FOR RIGHT */
@@ -134,6 +136,46 @@ extern "C" {
 #define UPPER_DRIVE_CMD_SELECT_BIT  (1u << 0)
 #define UPPER_DRIVE_CMD_SELECT_0200 0u
 #define UPPER_DRIVE_CMD_SELECT_0220 1u
+
+/* ===================== Work Tool Config Persistence ===================== */
+/* 0x18FF0250 data[0]: config_group */
+#define TOOL_CFG_GROUP_SYSTEM        0x00u
+#define TOOL_CFG_GROUP_ACTUATOR_POS  0x01u
+#define TOOL_CFG_GROUP_BLADE_RPM     0x02u
+#define TOOL_CFG_GROUP_DRIVE_PROFILE 0x03u
+
+/* 0x18FF0250 data[1]: command_type */
+#define TOOL_CFG_CMD_REQUEST         0x00u
+#define TOOL_CFG_CMD_SET_RUNTIME     0x01u
+#define TOOL_CFG_CMD_SAVE            0x02u
+#define TOOL_CFG_CMD_RESTORE_DEFAULT 0x03u
+#define TOOL_CFG_CMD_SET_AND_SAVE    0x04u
+
+/* 0x18FF0340 data[1]: status_flags */
+#define TOOL_CFG_ST_VALID         (1u << 0)
+#define TOOL_CFG_ST_FROM_EEPROM   (1u << 1)
+#define TOOL_CFG_ST_DEFAULT_USED  (1u << 2)
+#define TOOL_CFG_ST_DIRTY         (1u << 3)
+#define TOOL_CFG_ST_SAVED         (1u << 4)
+#define TOOL_CFG_ST_RANGE_CLAMPED (1u << 5)
+#define TOOL_CFG_ST_CRC_ERROR     (1u << 6)
+#define TOOL_CFG_ST_STORAGE_ERROR (1u << 7)
+
+/* 0x18FF0340 data[3]: result_code */
+#define TOOL_CFG_RESULT_OK              0x00u
+#define TOOL_CFG_RESULT_UNKNOWN_GROUP   0x01u
+#define TOOL_CFG_RESULT_UNKNOWN_INDEX   0x02u
+#define TOOL_CFG_RESULT_UNKNOWN_COMMAND 0x03u
+#define TOOL_CFG_RESULT_RANGE_ERROR     0x04u
+#define TOOL_CFG_RESULT_CRC_ERROR       0x05u
+#define TOOL_CFG_RESULT_STORAGE_ERROR   0x06u
+#define TOOL_CFG_RESULT_BUSY            0x07u
+
+/* EEPROM-backed drive profile range. 0x18FF0200 live command remains independent. */
+#define TOOL_CFG_DRIVE_MAX_DRIVER_MIN       1u
+#define TOOL_CFG_DRIVE_MAX_DRIVER_MAX       2000u
+#define TOOL_CFG_DRIVE_MAX_SPEED_X100_MIN   1u
+#define TOOL_CFG_DRIVE_MAX_SPEED_X100_MAX   1500u
 
 /* ===================== Upper Weed/Blade Status Enums ===================== */
 /* 0x18FF0320 data[0]: VCU-interpreted actuator summary state. */

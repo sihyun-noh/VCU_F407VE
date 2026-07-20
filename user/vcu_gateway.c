@@ -9,8 +9,8 @@
  *  - can_tx_thread: periodic control TX + upper status/report TX
  *
  * Key CAN IDs (current):
- *  - Upper -> Gateway CMD:   0x18FF0200, 0x18FF0210, 0x18FF0220, 0x18FF0230, 0x18FF0240
- *  - Gateway -> Upper ST:    0x18FF0300, 0x18FF0310, 0x18FF0320, 0x18FF0330
+ *  - Upper -> Gateway CMD:   0x18FF0200, 0x18FF0210, 0x18FF0220, 0x18FF0230, 0x18FF0240, 0x18FF0250
+ *  - Gateway -> Upper ST:    0x18FF0300, 0x18FF0310, 0x18FF0320, 0x18FF0330, 0x18FF0340
  *  - Gateway -> Upper MON:   0x18FF4000, 0x18FF4010
  *  - Weed actuator RX:       0x18FF00C8
  *  - Weed actuator TX:       0x18EFC800
@@ -27,9 +27,17 @@
 #include "MPU6050.h"
 #include "SBUS_AGMO.h"
 #include "board.h"
+#include "bsp_i2c_ee.h"
 #include "main.h"
 #include "rc_mixer.h"
 #include "vcu_gateway.h"
+
+/* ===================== Work Tool Config EEPROM Layout ===================== */
+#define TOOL_CFG_EEPROM_ADDR    0x0200u
+#define TOOL_CFG_EEPROM_SIZE    32u
+#define TOOL_CFG_MAGIC          0x57434647u /* "WCFG" */
+#define TOOL_CFG_VERSION        1u
+#define TOOL_CFG_CHECKSUM_INDEX 28u
 
 /* ===================== Internal Types ===================== */
 /* RC intent snapshot (produced by sbus_thread, consumed by fsm_thread). */
@@ -101,6 +109,46 @@ typedef struct {
   uint16_t right_rpm_cmd; /* data[4:5], uint16 BE */
   uint8_t blade_accel;    /* data[6], 0=default, otherwise clamped to BLADE_CMD_ACCEL_MIN..MAX */
 } upper_blade_cmd_t;
+
+typedef struct {
+  rt_tick_t ts;
+  bool valid;
+  uint8_t group;        /* data[0]: TOOL_CFG_GROUP_* */
+  uint8_t command_type; /* data[1]: TOOL_CFG_CMD_* */
+  uint8_t index;        /* data[2]: group-specific index */
+  uint16_t value1;      /* data[4:5], uint16 BE */
+  uint16_t value2;      /* data[6:7], uint16 BE */
+} upper_tool_config_cmd_t;
+
+typedef struct {
+  uint16_t actuator_up_mm;
+  uint16_t actuator_mid_mm;
+  uint16_t actuator_down_mm;
+  uint16_t actuator_max_mm;
+  uint16_t blade_low_rpm;
+  uint16_t blade_mid_rpm;
+  uint16_t blade_high_rpm;
+  uint16_t blade_max_rpm;
+  uint16_t drive_max_driver_input_cmd;
+  uint16_t drive_max_speed_kmh_x100;
+} tool_config_values_t;
+
+typedef struct {
+  tool_config_values_t values;
+  bool valid;
+  bool from_eeprom;
+  bool default_used;
+  bool dirty;
+  bool saved;
+  bool range_clamped;
+  bool crc_error;
+  bool storage_error;
+  uint8_t last_group;
+  uint8_t last_index;
+  uint8_t last_result;
+  uint16_t last_value1;
+  uint16_t last_value2;
+} tool_config_t;
 
 typedef struct {
   rt_tick_t ts;
@@ -250,6 +298,8 @@ struct {
   upper_status_t upper_vcu_st;
   upper_status_rpm_t upper_rpm_st;
   vcu_motion_monitor_t motion_monitor;
+  tool_config_t tool_config;
+  bool tool_config_status_pending;
 } g_latest;
 
 static rt_mutex_t g_lock = RT_NULL;
@@ -339,7 +389,382 @@ static inline uint16_t abs_diff_u16(uint16_t a, uint16_t b) {
   return (a >= b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
 }
 
-static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
+static uint16_t read_be16_buf(const uint8_t* p) {
+  return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
+static void write_be16_buf(uint8_t* p, uint16_t v) {
+  p[0] = (uint8_t)((v >> 8) & 0xFFu);
+  p[1] = (uint8_t)(v & 0xFFu);
+}
+
+static uint32_t read_be32_buf(const uint8_t* p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static void write_be32_buf(uint8_t* p, uint32_t v) {
+  p[0] = (uint8_t)((v >> 24) & 0xFFu);
+  p[1] = (uint8_t)((v >> 16) & 0xFFu);
+  p[2] = (uint8_t)((v >> 8) & 0xFFu);
+  p[3] = (uint8_t)(v & 0xFFu);
+}
+
+static uint16_t tool_cfg_checksum16(const uint8_t buf[TOOL_CFG_EEPROM_SIZE]) {
+  uint16_t sum = 0u;
+  uint8_t i;
+
+  for (i = 0u; i < TOOL_CFG_CHECKSUM_INDEX; i++)
+    sum = (uint16_t)(sum + buf[i]);
+
+  return (uint16_t)(0xFFFFu - sum);
+}
+
+static void tool_cfg_set_defaults(tool_config_t* cfg) {
+  if (!cfg)
+    return;
+
+  memset(cfg, 0, sizeof(*cfg));
+  cfg->values.actuator_up_mm = WEED_POS_UP_MM;
+  cfg->values.actuator_mid_mm = WEED_POS_MID_MM;
+  cfg->values.actuator_down_mm = WEED_POS_DOWN_MM;
+  cfg->values.actuator_max_mm = WEED_ACT_POS_MAX_MM;
+  cfg->values.blade_low_rpm = BLADE_RPM_STAGE_LOW;
+  cfg->values.blade_mid_rpm = BLADE_RPM_STAGE_MID;
+  cfg->values.blade_high_rpm = BLADE_RPM_STAGE_HIGH;
+  cfg->values.blade_max_rpm = BLADE_RPM_CMD_MAX;
+  cfg->values.drive_max_driver_input_cmd = (uint16_t)RCM_MAX_DRIVER_INPUT;
+  cfg->values.drive_max_speed_kmh_x100 = (uint16_t)(RCM_MAX_SPEED_KMH * 100.0f);
+  cfg->valid = true;
+  cfg->default_used = true;
+  cfg->last_group = TOOL_CFG_GROUP_SYSTEM;
+  cfg->last_index = 0u;
+  cfg->last_result = TOOL_CFG_RESULT_OK;
+}
+
+static uint16_t tool_cfg_clamp_u16(uint16_t value, uint16_t min_v, uint16_t max_v, bool* clamped) {
+  uint16_t out = value;
+
+  if (out < min_v) {
+    out = min_v;
+    if (clamped)
+      *clamped = true;
+  }
+  if (out > max_v) {
+    out = max_v;
+    if (clamped)
+      *clamped = true;
+  }
+  return out;
+}
+
+static void tool_cfg_clamp_values(tool_config_t* cfg) {
+  bool clamped = false;
+  uint16_t act_max;
+  uint16_t blade_max;
+
+  if (!cfg)
+    return;
+
+  cfg->values.actuator_max_mm =
+      tool_cfg_clamp_u16(cfg->values.actuator_max_mm, 1u, WEED_ACT_POS_MAX_MM, &clamped);
+  act_max = cfg->values.actuator_max_mm;
+  cfg->values.actuator_up_mm = tool_cfg_clamp_u16(cfg->values.actuator_up_mm, 0u, act_max, &clamped);
+  cfg->values.actuator_mid_mm = tool_cfg_clamp_u16(cfg->values.actuator_mid_mm, 0u, act_max, &clamped);
+  cfg->values.actuator_down_mm = tool_cfg_clamp_u16(cfg->values.actuator_down_mm, 0u, act_max, &clamped);
+
+  cfg->values.blade_max_rpm = tool_cfg_clamp_u16(cfg->values.blade_max_rpm, 1u, BLADE_RPM_CMD_MAX, &clamped);
+  blade_max = cfg->values.blade_max_rpm;
+  cfg->values.blade_low_rpm = tool_cfg_clamp_u16(cfg->values.blade_low_rpm, 0u, blade_max, &clamped);
+  cfg->values.blade_mid_rpm = tool_cfg_clamp_u16(cfg->values.blade_mid_rpm, 0u, blade_max, &clamped);
+  cfg->values.blade_high_rpm = tool_cfg_clamp_u16(cfg->values.blade_high_rpm, 0u, blade_max, &clamped);
+
+  cfg->values.drive_max_driver_input_cmd = tool_cfg_clamp_u16(
+      cfg->values.drive_max_driver_input_cmd, TOOL_CFG_DRIVE_MAX_DRIVER_MIN, TOOL_CFG_DRIVE_MAX_DRIVER_MAX, &clamped);
+  cfg->values.drive_max_speed_kmh_x100 = tool_cfg_clamp_u16(
+      cfg->values.drive_max_speed_kmh_x100, TOOL_CFG_DRIVE_MAX_SPEED_X100_MIN, TOOL_CFG_DRIVE_MAX_SPEED_X100_MAX,
+      &clamped);
+
+  if (clamped)
+    cfg->range_clamped = true;
+}
+
+static void tool_cfg_pack_eeprom(const tool_config_t* cfg, uint8_t buf[TOOL_CFG_EEPROM_SIZE]) {
+  memset(buf, 0, TOOL_CFG_EEPROM_SIZE);
+  write_be32_buf(&buf[0], TOOL_CFG_MAGIC);
+  buf[4] = TOOL_CFG_VERSION;
+  write_be16_buf(&buf[8], cfg->values.actuator_up_mm);
+  write_be16_buf(&buf[10], cfg->values.actuator_mid_mm);
+  write_be16_buf(&buf[12], cfg->values.actuator_down_mm);
+  write_be16_buf(&buf[14], cfg->values.actuator_max_mm);
+  write_be16_buf(&buf[16], cfg->values.blade_low_rpm);
+  write_be16_buf(&buf[18], cfg->values.blade_mid_rpm);
+  write_be16_buf(&buf[20], cfg->values.blade_high_rpm);
+  write_be16_buf(&buf[22], cfg->values.blade_max_rpm);
+  write_be16_buf(&buf[24], cfg->values.drive_max_driver_input_cmd);
+  write_be16_buf(&buf[26], cfg->values.drive_max_speed_kmh_x100);
+  write_be16_buf(&buf[TOOL_CFG_CHECKSUM_INDEX], tool_cfg_checksum16(buf));
+}
+
+static bool tool_cfg_unpack_eeprom(const uint8_t buf[TOOL_CFG_EEPROM_SIZE], tool_config_t* cfg) {
+  uint16_t stored_crc;
+  uint16_t calc_crc;
+
+  if (read_be32_buf(&buf[0]) != TOOL_CFG_MAGIC)
+    return false;
+  if (buf[4] != TOOL_CFG_VERSION)
+    return false;
+
+  stored_crc = read_be16_buf(&buf[TOOL_CFG_CHECKSUM_INDEX]);
+  calc_crc = tool_cfg_checksum16(buf);
+  if (stored_crc != calc_crc)
+    return false;
+
+  tool_cfg_set_defaults(cfg);
+  cfg->values.actuator_up_mm = read_be16_buf(&buf[8]);
+  cfg->values.actuator_mid_mm = read_be16_buf(&buf[10]);
+  cfg->values.actuator_down_mm = read_be16_buf(&buf[12]);
+  cfg->values.actuator_max_mm = read_be16_buf(&buf[14]);
+  cfg->values.blade_low_rpm = read_be16_buf(&buf[16]);
+  cfg->values.blade_mid_rpm = read_be16_buf(&buf[18]);
+  cfg->values.blade_high_rpm = read_be16_buf(&buf[20]);
+  cfg->values.blade_max_rpm = read_be16_buf(&buf[22]);
+  cfg->values.drive_max_driver_input_cmd = read_be16_buf(&buf[24]);
+  cfg->values.drive_max_speed_kmh_x100 = read_be16_buf(&buf[26]);
+  cfg->default_used = false;
+  cfg->from_eeprom = true;
+  cfg->dirty = false;
+  cfg->saved = false;
+  cfg->crc_error = false;
+  cfg->storage_error = false;
+  tool_cfg_clamp_values(cfg);
+  return true;
+}
+
+static bool tool_cfg_save_to_eeprom(tool_config_t* cfg) {
+  uint8_t wr[TOOL_CFG_EEPROM_SIZE];
+  uint8_t rd[TOOL_CFG_EEPROM_SIZE];
+  uint8_t i;
+
+  if (!cfg)
+    return false;
+
+  tool_cfg_clamp_values(cfg);
+  tool_cfg_pack_eeprom(cfg, wr);
+  if (ee_WriteBytes(wr, TOOL_CFG_EEPROM_ADDR, TOOL_CFG_EEPROM_SIZE) == 0u) {
+    cfg->storage_error = true;
+    cfg->saved = false;
+    cfg->last_result = TOOL_CFG_RESULT_STORAGE_ERROR;
+    return false;
+  }
+
+  Delay_Ms(10);
+  memset(rd, 0, sizeof(rd));
+  if (ee_ReadBytes(rd, TOOL_CFG_EEPROM_ADDR, TOOL_CFG_EEPROM_SIZE) == 0u) {
+    cfg->storage_error = true;
+    cfg->saved = false;
+    cfg->last_result = TOOL_CFG_RESULT_STORAGE_ERROR;
+    return false;
+  }
+
+  for (i = 0u; i < TOOL_CFG_EEPROM_SIZE; i++) {
+    if (rd[i] != wr[i]) {
+      cfg->storage_error = true;
+      cfg->saved = false;
+      cfg->last_result = TOOL_CFG_RESULT_STORAGE_ERROR;
+      return false;
+    }
+  }
+
+  cfg->valid = true;
+  cfg->from_eeprom = true;
+  cfg->default_used = false;
+  cfg->dirty = false;
+  cfg->saved = true;
+  cfg->storage_error = false;
+  cfg->crc_error = false;
+  cfg->last_result = cfg->range_clamped ? TOOL_CFG_RESULT_RANGE_ERROR : TOOL_CFG_RESULT_OK;
+  return true;
+}
+
+static void tool_cfg_load_from_eeprom(tool_config_t* cfg) {
+  uint8_t buf[TOOL_CFG_EEPROM_SIZE];
+
+  tool_cfg_set_defaults(cfg);
+
+  if (ee_CheckOk() == 0u) {
+    cfg->storage_error = true;
+    cfg->last_result = TOOL_CFG_RESULT_STORAGE_ERROR;
+    return;
+  }
+
+  memset(buf, 0, sizeof(buf));
+  if (ee_ReadBytes(buf, TOOL_CFG_EEPROM_ADDR, TOOL_CFG_EEPROM_SIZE) == 0u) {
+    cfg->storage_error = true;
+    cfg->last_result = TOOL_CFG_RESULT_STORAGE_ERROR;
+    return;
+  }
+
+  if (!tool_cfg_unpack_eeprom(buf, cfg)) {
+    tool_cfg_set_defaults(cfg);
+    cfg->crc_error = true;
+    cfg->last_result = TOOL_CFG_RESULT_CRC_ERROR;
+    return;
+  }
+
+  cfg->last_result = cfg->range_clamped ? TOOL_CFG_RESULT_RANGE_ERROR : TOOL_CFG_RESULT_OK;
+}
+
+static void tool_cfg_response_values(const tool_config_t* cfg, uint8_t group, uint8_t index, uint16_t* value1,
+                                     uint16_t* value2) {
+  *value1 = 0u;
+  *value2 = 0u;
+
+  if (group == TOOL_CFG_GROUP_ACTUATOR_POS) {
+    if (index == 0u) {
+      *value1 = cfg->values.actuator_up_mm;
+      *value2 = cfg->values.actuator_mid_mm;
+    } else if (index == 1u) {
+      *value1 = cfg->values.actuator_down_mm;
+      *value2 = cfg->values.actuator_max_mm;
+    }
+  } else if (group == TOOL_CFG_GROUP_BLADE_RPM) {
+    if (index == 0u) {
+      *value1 = cfg->values.blade_low_rpm;
+      *value2 = cfg->values.blade_mid_rpm;
+    } else if (index == 1u) {
+      *value1 = cfg->values.blade_high_rpm;
+      *value2 = cfg->values.blade_max_rpm;
+    }
+  } else if (group == TOOL_CFG_GROUP_DRIVE_PROFILE && index == 0u) {
+    *value1 = cfg->values.drive_max_driver_input_cmd;
+    *value2 = cfg->values.drive_max_speed_kmh_x100;
+  }
+}
+
+static bool tool_cfg_apply_values(tool_config_t* cfg, uint8_t group, uint8_t index, uint16_t value1, uint16_t value2) {
+  if (group == TOOL_CFG_GROUP_ACTUATOR_POS) {
+    if (index == 0u) {
+      cfg->values.actuator_up_mm = value1;
+      cfg->values.actuator_mid_mm = value2;
+    } else if (index == 1u) {
+      cfg->values.actuator_down_mm = value1;
+      cfg->values.actuator_max_mm = value2;
+    } else {
+      return false;
+    }
+  } else if (group == TOOL_CFG_GROUP_BLADE_RPM) {
+    if (index == 0u) {
+      cfg->values.blade_low_rpm = value1;
+      cfg->values.blade_mid_rpm = value2;
+    } else if (index == 1u) {
+      cfg->values.blade_high_rpm = value1;
+      cfg->values.blade_max_rpm = value2;
+    } else {
+      return false;
+    }
+  } else if (group == TOOL_CFG_GROUP_DRIVE_PROFILE) {
+    if (index != 0u)
+      return false;
+    cfg->values.drive_max_driver_input_cmd = value1;
+    cfg->values.drive_max_speed_kmh_x100 = value2;
+  } else {
+    return false;
+  }
+
+  cfg->range_clamped = false;
+  tool_cfg_clamp_values(cfg);
+  cfg->valid = true;
+  cfg->dirty = true;
+  cfg->saved = false;
+  cfg->default_used = false;
+  cfg->last_result = cfg->range_clamped ? TOOL_CFG_RESULT_RANGE_ERROR : TOOL_CFG_RESULT_OK;
+  return true;
+}
+
+static bool tool_cfg_is_known_index(uint8_t group, uint8_t index) {
+  if (group == TOOL_CFG_GROUP_SYSTEM)
+    return (index <= 2u);
+  if (group == TOOL_CFG_GROUP_ACTUATOR_POS || group == TOOL_CFG_GROUP_BLADE_RPM)
+    return (index <= 1u);
+  if (group == TOOL_CFG_GROUP_DRIVE_PROFILE)
+    return (index == 0u);
+  return false;
+}
+
+static void tool_cfg_process_cmd(tool_config_t* cfg, const upper_tool_config_cmd_t* cmd) {
+  bool save_requested = false;
+
+  if (!cfg || !cmd)
+    return;
+
+  cfg->last_group = cmd->group;
+  cfg->last_index = cmd->index;
+  cfg->last_value1 = cmd->value1;
+  cfg->last_value2 = cmd->value2;
+  cfg->saved = false;
+
+  if (cmd->group > TOOL_CFG_GROUP_DRIVE_PROFILE) {
+    cfg->last_result = TOOL_CFG_RESULT_UNKNOWN_GROUP;
+    return;
+  }
+  if (!tool_cfg_is_known_index(cmd->group, cmd->index)) {
+    cfg->last_result = TOOL_CFG_RESULT_UNKNOWN_INDEX;
+    return;
+  }
+
+  if (cmd->command_type == TOOL_CFG_CMD_REQUEST) {
+    if (cmd->group != TOOL_CFG_GROUP_SYSTEM)
+      tool_cfg_response_values(cfg, cmd->group, cmd->index, &cfg->last_value1, &cfg->last_value2);
+    cfg->last_result = TOOL_CFG_RESULT_OK;
+    return;
+  }
+
+  if (cmd->command_type == TOOL_CFG_CMD_SET_RUNTIME || cmd->command_type == TOOL_CFG_CMD_SET_AND_SAVE) {
+    if (!tool_cfg_apply_values(cfg, cmd->group, cmd->index, cmd->value1, cmd->value2)) {
+      cfg->last_result =
+          (cmd->group > TOOL_CFG_GROUP_DRIVE_PROFILE) ? TOOL_CFG_RESULT_UNKNOWN_GROUP : TOOL_CFG_RESULT_UNKNOWN_INDEX;
+      return;
+    }
+    save_requested = (cmd->command_type == TOOL_CFG_CMD_SET_AND_SAVE);
+  } else if (cmd->command_type == TOOL_CFG_CMD_SAVE) {
+    save_requested = true;
+  } else if (cmd->command_type == TOOL_CFG_CMD_RESTORE_DEFAULT) {
+    tool_cfg_set_defaults(cfg);
+    cfg->dirty = true;
+    save_requested = true;
+  } else {
+    cfg->last_result = TOOL_CFG_RESULT_UNKNOWN_COMMAND;
+    return;
+  }
+
+  if (save_requested)
+    (void)tool_cfg_save_to_eeprom(cfg);
+
+  tool_cfg_response_values(cfg, cfg->last_group, cfg->last_index, &cfg->last_value1, &cfg->last_value2);
+}
+
+static uint8_t tool_cfg_status_flags(const tool_config_t* cfg) {
+  uint8_t flags = 0u;
+  if (cfg->valid)
+    flags |= TOOL_CFG_ST_VALID;
+  if (cfg->from_eeprom)
+    flags |= TOOL_CFG_ST_FROM_EEPROM;
+  if (cfg->default_used)
+    flags |= TOOL_CFG_ST_DEFAULT_USED;
+  if (cfg->dirty)
+    flags |= TOOL_CFG_ST_DIRTY;
+  if (cfg->saved)
+    flags |= TOOL_CFG_ST_SAVED;
+  if (cfg->range_clamped)
+    flags |= TOOL_CFG_ST_RANGE_CLAMPED;
+  if (cfg->crc_error)
+    flags |= TOOL_CFG_ST_CRC_ERROR;
+  if (cfg->storage_error)
+    flags |= TOOL_CFG_ST_STORAGE_ERROR;
+  return flags;
+}
+
+static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw, const tool_config_values_t* cfg) {
   uint32_t d_down;
   uint32_t d_mid;
   uint32_t d_up;
@@ -351,23 +776,23 @@ static uint16_t map_ch5_to_weed_target_mm(uint16_t ch5_raw) {
   d_up = (ch5_raw >= WEED_CH5_RAW_UP) ? (uint32_t)(ch5_raw - WEED_CH5_RAW_UP) : (uint32_t)(WEED_CH5_RAW_UP - ch5_raw);
 
   if (d_down <= d_mid && d_down <= d_up)
-    return WEED_POS_DOWN_MM;
+    return cfg->actuator_down_mm;
   if (d_mid <= d_down && d_mid <= d_up)
-    return WEED_POS_MID_MM;
-  return WEED_POS_UP_MM;
+    return cfg->actuator_mid_mm;
+  return cfg->actuator_up_mm;
 }
 
-static uint16_t map_upper_weed_stage_to_mm(uint8_t stage_or_mm) {
+static uint16_t map_upper_weed_stage_to_mm(uint8_t stage_or_mm, const tool_config_values_t* cfg) {
   if (stage_or_mm == UPPER_WEED_STAGE_UP)
-    return WEED_POS_UP_MM;
+    return cfg->actuator_up_mm;
   if (stage_or_mm == UPPER_WEED_STAGE_MID)
-    return WEED_POS_MID_MM;
+    return cfg->actuator_mid_mm;
   if (stage_or_mm == UPPER_WEED_STAGE_DOWN)
-    return WEED_POS_DOWN_MM;
-  return (uint16_t)clamp_i32((int32_t)stage_or_mm, 0, WEED_ACT_POS_MAX_MM);
+    return cfg->actuator_down_mm;
+  return (uint16_t)clamp_i32((int32_t)stage_or_mm, 0, cfg->actuator_max_mm);
 }
 
-static uint16_t map_ch6_to_blade_rpm(uint16_t ch6_raw) {
+static uint16_t map_ch6_to_blade_rpm(uint16_t ch6_raw, const tool_config_values_t* cfg) {
   uint32_t d_low;
   uint32_t d_mid;
   uint32_t d_high;
@@ -380,10 +805,10 @@ static uint16_t map_ch6_to_blade_rpm(uint16_t ch6_raw) {
                                            : (uint32_t)(BLADE_CH6_RAW_HIGH - ch6_raw);
 
   if (d_low <= d_mid && d_low <= d_high)
-    return BLADE_RPM_STAGE_LOW;
+    return cfg->blade_low_rpm;
   if (d_mid <= d_low && d_mid <= d_high)
-    return BLADE_RPM_STAGE_MID;
-  return BLADE_RPM_STAGE_HIGH;
+    return cfg->blade_mid_rpm;
+  return cfg->blade_high_rpm;
 }
 
 /* MPU6050 gyro config is set to +-2000dps (GYRO_CONFIG=0x18): 16.4 LSB/(deg/s). */
@@ -835,6 +1260,32 @@ static bool decode_upper_blade_cmd(const can_frame_t* rx, upper_blade_cmd_t* out
   return true;
 }
 
+static bool decode_upper_tool_config_cmd(const can_frame_t* rx, upper_tool_config_cmd_t* out) {
+  if (rx->ext_id != CANID_UPPER_CMD_TOOL_CONFIG_RX)
+    return false;
+  if (rx->dlc < 8u)
+    return false;
+
+  memset(out, 0, sizeof(*out));
+  out->ts = now_tick();
+  out->valid = true;
+
+  /* Upper -> gateway work tool config payload (0x18FF0250):
+   * data[0]   : config_group
+   * data[1]   : command_type
+   * data[2]   : index
+   * data[3]   : reserved
+   * data[4:5] : value1 (uint16 BE)
+   * data[6:7] : value2 (uint16 BE)
+   */
+  out->group = rx->data[0];
+  out->command_type = rx->data[1];
+  out->index = rx->data[2];
+  out->value1 = (uint16_t)(((uint16_t)rx->data[4] << 8) | (uint16_t)rx->data[5]);
+  out->value2 = (uint16_t)(((uint16_t)rx->data[6] << 8) | (uint16_t)rx->data[7]);
+  return true;
+}
+
 /* Decode Upper normalized throttle/steering drive command (0x18FF0200). */
 static bool decode_upper_drive_cmd(const can_frame_t* rx, upper_intent_drive_t* out) {
   if (rx->ext_id != CANID_UPPER_CMD_DRIVE_RX)
@@ -1031,6 +1482,26 @@ static void pack_upper_status_rpm(const upper_status_rpm_t* rpm_fb, uint8_t out[
     out[5] = (uint8_t)(st->axis2_cmd & 0xFF);
     out[6] = (uint8_t)((st->axis2_cmd >> 8) & 0xFF);
   */
+}
+
+/* Upper work-tool config status TX 0x18FF0340.
+ * data[0]   : config_group
+ * data[1]   : status_flags
+ * data[2]   : index
+ * data[3]   : result_code
+ * data[4:5] : value1 (uint16 BE)
+ * data[6:7] : value2 (uint16 BE)
+ */
+static void pack_upper_tool_config_status(const tool_config_t* cfg, uint8_t out[8]) {
+  memset(out, 0, 8);
+  out[0] = cfg->last_group;
+  out[1] = tool_cfg_status_flags(cfg);
+  out[2] = cfg->last_index;
+  out[3] = cfg->last_result;
+  out[4] = (uint8_t)((cfg->last_value1 >> 8) & 0xFFu);
+  out[5] = (uint8_t)(cfg->last_value1 & 0xFFu);
+  out[6] = (uint8_t)((cfg->last_value2 >> 8) & 0xFFu);
+  out[7] = (uint8_t)(cfg->last_value2 & 0xFFu);
 }
 
 /* Upper vehicle status TX 0x18FF0320 (motion monitor snapshot)
@@ -1715,18 +2186,18 @@ static void weed_fsm_step(rt_tick_t now, bool actuator_requested, bool run_allow
 #endif
 }
 
-static bool select_upper_weed_target(const upper_weed_cmd_t* cmd, uint16_t* target_mm) {
-  uint16_t selected = WEED_POS_UP_MM;
+static bool select_upper_weed_target(const upper_weed_cmd_t* cmd, const tool_config_values_t* cfg, uint16_t* target_mm) {
+  uint16_t selected = cfg->actuator_up_mm;
 
-  if (!cmd || !cmd->valid || !target_mm)
+  if (!cmd || !cfg || !cmd->valid || !target_mm)
     return false;
 
   if (cmd->target_position_mm != 0u)
     selected = cmd->target_position_mm;
   else
-    selected = map_upper_weed_stage_to_mm(cmd->stage);
+    selected = map_upper_weed_stage_to_mm(cmd->stage, cfg);
 
-  *target_mm = (uint16_t)clamp_i32((int32_t)selected, 0, WEED_ACT_POS_MAX_MM);
+  *target_mm = (uint16_t)clamp_i32((int32_t)selected, 0, cfg->actuator_max_mm);
 
   /* SET_TARGET only stores the target in the latest cache.
    * MOVE_TO_TARGET is the explicit actuator motion request.
@@ -1734,14 +2205,15 @@ static bool select_upper_weed_target(const upper_weed_cmd_t* cmd, uint16_t* targ
   return (cmd->command_type == UPPER_WEED_CMD_MOVE_TO_TARGET);
 }
 
-static bool select_upper_blade_cmd(const upper_blade_cmd_t* cmd, uint16_t* rpm_cmd, uint8_t* accel_cmd) {
+static bool select_upper_blade_cmd(const upper_blade_cmd_t* cmd, const tool_config_values_t* cfg, uint16_t* rpm_cmd,
+                                   uint8_t* accel_cmd) {
   uint32_t rpm_avg = 0u;
 
-  if (!cmd || !cmd->valid || !rpm_cmd || !accel_cmd)
+  if (!cmd || !cfg || !cmd->valid || !rpm_cmd || !accel_cmd)
     return false;
 
   rpm_avg = ((uint32_t)cmd->left_rpm_cmd + (uint32_t)cmd->right_rpm_cmd) / 2u;
-  *rpm_cmd = (uint16_t)clamp_i32((int32_t)rpm_avg, 0, BLADE_RPM_CMD_MAX);
+  *rpm_cmd = (uint16_t)clamp_i32((int32_t)rpm_avg, 0, cfg->blade_max_rpm);
   *accel_cmd = normalize_blade_accel(cmd->blade_accel);
 
   /* Current blade TX path uses one synchronized RPM command for left/right.
@@ -1802,6 +2274,17 @@ static void sbus_thread_entry(void* parameter) {
 
 #endif
     rc_intent_t rc;
+    tool_config_t tool_cfg;
+    vehicle_config_t rc_vehicle_cfg;
+
+    rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+    tool_cfg = g_latest.tool_config;
+    rt_mutex_release(g_lock);
+
+    rc_vehicle_cfg = g_rcm_vehicle;
+    rc_vehicle_cfg.max_driver_input = (float)tool_cfg.values.drive_max_driver_input_cmd;
+    rc_vehicle_cfg.max_speed_kmh = (float)tool_cfg.values.drive_max_speed_kmh_x100 / 100.0f;
+
     memset(&rc, 0, sizeof(rc));
     rc.ts = now_tick();
     rc.valid = (!failsafe && !lost);
@@ -1816,9 +2299,9 @@ static void sbus_thread_entry(void* parameter) {
     }
 
     /* TODO: map channels properly */
-    rc.weed_target_mm = map_ch5_to_weed_target_mm(ch.CH5);
+    rc.weed_target_mm = map_ch5_to_weed_target_mm(ch.CH5, &tool_cfg.values);
     rc.cultivator_down = (rc.weed_target_mm > 0u);
-    rc.blade_rpm_cmd = map_ch6_to_blade_rpm(ch.CH6);
+    rc.blade_rpm_cmd = map_ch6_to_blade_rpm(ch.CH6, &tool_cfg.values);
     rc.cultivator_on = (rc.blade_rpm_cmd > 0u);
     rc.rc_emergency_stop = (ch.CH8 > 1000);
     rc.rc_enable = (ch.CH9 > 1000);
@@ -1856,7 +2339,7 @@ static void sbus_thread_entry(void* parameter) {
     memset(&rc_mix_state, 0, sizeof(rc_mix_state));
     rc_mix_in.throttle = (float)rc.axis3;
     rc_mix_in.steering = (float)rc.axis1;
-    rc_mix_out = mix_rc_to_tracks(&rc_mix_in, rc.rc_drive_mode, &g_rcm_vehicle, &g_rcm_tune, &rc_mix_state);
+    rc_mix_out = mix_rc_to_tracks(&rc_mix_in, rc.rc_drive_mode, &rc_vehicle_cfg, &g_rcm_tune, &rc_mix_state);
     rc.left_rpm_value = rc_mix_out.left_input;
     rc.right_rpm_value = rc_mix_out.right_input;
     (void)rc_mix_state; /* available for debug/logging if needed */
@@ -1887,6 +2370,7 @@ static void fsm_thread_entry(void* parameter) {
   weed_actuator_status_t weed_st;
   weed_tx_plan_t weed_plan;
   vcu_motion_monitor_t motion_monitor;
+  tool_config_t tool_cfg;
 
   for (;;) {
     rt_thread_delay(FSM_PERIOD_MS);
@@ -1907,6 +2391,7 @@ static void fsm_thread_entry(void* parameter) {
     weed_st = g_latest.weed_actuator;
     weed_plan = g_latest.weed_tx_plan;
     motion_monitor = g_latest.motion_monitor;
+    tool_cfg = g_latest.tool_config;
     rt_mutex_release(g_lock);
 
     bool rc_ok = rc.valid && is_fresh_tick(now, rc.ts, SBUS_TIMEOUT_MS);
@@ -1939,11 +2424,12 @@ static void fsm_thread_entry(void* parameter) {
      *   This prevents stale RC actuator/blade values from carrying into Auto.
      */
     bool weed_upper_active = upper_auto_ready;
-    uint16_t upper_weed_target_mm = WEED_POS_UP_MM;
+    uint16_t upper_weed_target_mm = tool_cfg.values.actuator_up_mm;
     uint16_t upper_blade_rpm_cmd = 0u;
     uint8_t upper_blade_accel_cmd = BLADE_CMD_ACCEL;
-    bool upper_weed_cmd_active = select_upper_weed_target(&upper_weed, &upper_weed_target_mm);
-    bool upper_blade_cmd_active = select_upper_blade_cmd(&upper_blade, &upper_blade_rpm_cmd, &upper_blade_accel_cmd);
+    bool upper_weed_cmd_active = select_upper_weed_target(&upper_weed, &tool_cfg.values, &upper_weed_target_mm);
+    bool upper_blade_cmd_active =
+        select_upper_blade_cmd(&upper_blade, &tool_cfg.values, &upper_blade_rpm_cmd, &upper_blade_accel_cmd);
     bool weed_cmd_active = weed_upper_active ? upper_weed_cmd_active : rc_active;
     bool blade_cmd_active = weed_upper_active ? upper_blade_cmd_active : rc_active;
     uint16_t weed_target_selected = weed_upper_active ? upper_weed_target_mm : rc.weed_target_mm;
@@ -2245,6 +2731,23 @@ static void can_rx_thread_entry(void* parameter) {
         continue;
       }
 
+      upper_tool_config_cmd_t tool_cmd;
+      if (decode_upper_tool_config_cmd(&rx, &tool_cmd)) {
+        tool_config_t next_cfg;
+
+        rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+        next_cfg = g_latest.tool_config;
+        rt_mutex_release(g_lock);
+
+        tool_cfg_process_cmd(&next_cfg, &tool_cmd);
+
+        rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+        g_latest.tool_config = next_cfg;
+        g_latest.tool_config_status_pending = true;
+        rt_mutex_release(g_lock);
+        continue;
+      }
+
       weed_actuator_status_t ws;
       if (decode_weed_actuator_status(&rx, &ws)) {
         rt_mutex_take(g_lock, RT_WAITING_FOREVER);
@@ -2311,6 +2814,8 @@ static void can_tx_thread_entry(void* parameter) {
     blade_status_t blade_right_st;
     weed_actuator_status_t weed_st;
     weed_tx_plan_t weed_plan;
+    tool_config_t tool_cfg;
+    bool tool_cfg_status_pending;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     cmd_left = g_latest.motor_cmd_left;
@@ -2325,6 +2830,8 @@ static void can_tx_thread_entry(void* parameter) {
     blade_right_st = g_latest.blade_right;
     weed_st = g_latest.weed_actuator;
     weed_plan = g_latest.weed_tx_plan;
+    tool_cfg = g_latest.tool_config;
+    tool_cfg_status_pending = g_latest.tool_config_status_pending;
     rt_mutex_release(g_lock);
 
     uint8_t d0[8], d1[8];
@@ -2398,6 +2905,15 @@ static void can_tx_thread_entry(void* parameter) {
       pack_upper_blade_status(&blade_left_st, &blade_right_st, &blade_cmd, &st, now, d1);
       (void)can_hw_send_ext(CANID_UPPER_BLADE_STATUS_TX, d1, 8);
 
+      if (tool_cfg_status_pending) {
+        pack_upper_tool_config_status(&tool_cfg, d1);
+        if (can_hw_send_ext(CANID_UPPER_TOOL_CONFIG_TX, d1, 8)) {
+          rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+          g_latest.tool_config_status_pending = false;
+          rt_mutex_release(g_lock);
+        }
+      }
+
       /* send vehicle motion status to upper monitor/test ID */
       pack_upper_vehicle_status(&mon, d1);
       (void)can_hw_send_ext(CANID_UPPER_VEHICLE_STATUS_TX, d1, 8);
@@ -2421,6 +2937,8 @@ int vcu_gateway_get_motion_monitor(vcu_motion_monitor_t* out) {
 
 /* ===================== Init ===================== */
 int vcu_gateway_init(void) {
+  tool_config_t boot_tool_cfg;
+
   /* mutex */
   g_lock = rt_mutex_create("gwlk", RT_IPC_FLAG_FIFO);
   if (!g_lock)
@@ -2447,6 +2965,12 @@ int vcu_gateway_init(void) {
     return -4;
   }
 
+  tool_cfg_load_from_eeprom(&boot_tool_cfg);
+  tool_cfg_response_values(&boot_tool_cfg, TOOL_CFG_GROUP_DRIVE_PROFILE, 0u, &boot_tool_cfg.last_value1,
+                           &boot_tool_cfg.last_value2);
+  boot_tool_cfg.last_group = TOOL_CFG_GROUP_DRIVE_PROFILE;
+  boot_tool_cfg.last_index = 0u;
+
   /* init shared structs to safe defaults */
   rt_mutex_take(g_lock, RT_WAITING_FOREVER);
   memset(&g_latest, 0, sizeof(g_latest));
@@ -2454,6 +2978,8 @@ int vcu_gateway_init(void) {
   g_latest.motor_cmd_left.src = FSM_CTRL_SRC_STOP;
   g_latest.motor_cmd_right.type = CMD_STOP;
   g_latest.motor_cmd_right.src = FSM_CTRL_SRC_STOP;
+  g_latest.tool_config = boot_tool_cfg;
+  g_latest.tool_config_status_pending = true;
   rt_mutex_release(g_lock);
 
   /* threads */

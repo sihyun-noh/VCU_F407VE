@@ -25,7 +25,7 @@
 #define MAIN_ENABLE_MODBUS_THREAD  0u /* Modbus test thread */
 #define MAIN_ENABLE_W5500_THREAD   0u /* W5500 test hook; function declaration must be verified before enabling */
 #define MAIN_ENABLE_EEPROM_THREAD  0u /* EEPROM thread writes fixed bytes; keep off for one-shot tests */
-#define MAIN_ENABLE_EEPROM_ONESHOT 1u /* One-shot EEPROM write/read test for JTAG debug */
+#define MAIN_ENABLE_EEPROM_ONESHOT 0u /* One-shot EEPROM write/read test for JTAG debug */
 #define MAIN_ENABLE_LED_INIT       0u /* LED init is already performed in board init */
 
 /* Legacy test parameter used by bsp_motor1_thread(). */

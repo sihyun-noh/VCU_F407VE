@@ -144,6 +144,7 @@ void Init_CAN1_Filter(void) {
   CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;               // 使能筛选器
   CAN_FilterInit(&CAN_FilterInitStructure);
   // 使能CAN的接收中断
+
   CAN_ITConfig(CAN1, CAN_IT_FMP0, ENABLE); // CAN_IT_FMP0表示当 FIFO0 接收到数据时会引起中断
 }
 
@@ -289,6 +290,21 @@ void Init_CAN1_Filter_AGMO(void) {
   CAN_FilterInitStructure.CAN_FilterNumber = 9;
   CAN_FilterInitStructure.CAN_FilterIdHigh = (id_10 >> 16) & 0xffff;
   CAN_FilterInitStructure.CAN_FilterIdLow = (id_10)&0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdHigh = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMaskIdLow = 0xffff;
+  CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdMask;
+  CAN_FilterInitStructure.CAN_FilterScale = CAN_FilterScale_32bit;
+  CAN_FilterInitStructure.CAN_FilterFIFOAssignment = CAN_Filter_FIFO0;
+  CAN_FilterInitStructure.CAN_FilterActivation = ENABLE;
+  CAN_FilterInit(&CAN_FilterInitStructure);
+
+
+  // upper work tool config cmd RX
+  uint32_t id_11 = (0x18ff0250 << 3) | CAN_ID_EXT | CAN_RTR_Data;
+
+  CAN_FilterInitStructure.CAN_FilterNumber = 10;
+  CAN_FilterInitStructure.CAN_FilterIdHigh = (id_11 >> 16) & 0xffff;
+  CAN_FilterInitStructure.CAN_FilterIdLow = (id_11)&0xffff;
   CAN_FilterInitStructure.CAN_FilterMaskIdHigh = 0xffff;
   CAN_FilterInitStructure.CAN_FilterMaskIdLow = 0xffff;
   CAN_FilterInitStructure.CAN_FilterMode = CAN_FilterMode_IdMask;
