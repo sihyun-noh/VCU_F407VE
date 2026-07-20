@@ -24,7 +24,8 @@
 #define MAIN_ENABLE_SBUS_THREAD    0u /* legacy SBUS test thread */
 #define MAIN_ENABLE_MODBUS_THREAD  0u /* Modbus test thread */
 #define MAIN_ENABLE_W5500_THREAD   0u /* W5500 test hook; function declaration must be verified before enabling */
-#define MAIN_ENABLE_EEPROM_THREAD  1u /* EEPROM bring-up test; writes fixed test bytes */
+#define MAIN_ENABLE_EEPROM_THREAD  0u /* EEPROM thread writes fixed bytes; keep off for one-shot tests */
+#define MAIN_ENABLE_EEPROM_ONESHOT 1u /* One-shot EEPROM write/read test for JTAG debug */
 #define MAIN_ENABLE_LED_INIT       0u /* LED init is already performed in board init */
 
 /* Legacy test parameter used by bsp_motor1_thread(). */
@@ -32,6 +33,12 @@
 
 /* Legacy SBUS test selector used by bsp_Sbus_thread(). */
 #define MAIN_SBUS_TEST_CHANNEL 4u
+
+/* EEPROM one-shot test constants. Use a non-zero address to verify 16-bit
+ * addressing on 24C256 without touching the legacy low-address test bytes.
+ */
+#define MAIN_EEPROM_TEST_ADDR 0x0100u
+#define MAIN_EEPROM_TEST_SIZE 4u
 
 /**
  * @brief Start optional legacy/test modules selected by MAIN_ENABLE_* flags.
@@ -50,7 +57,49 @@ extern int8_t RS485_3_flag;
 extern int8_t RS232_2_flag;
 extern int8_t RS232_1_flag;
 
+volatile uint8_t g_main_eeprom_present = 0u;
+volatile uint8_t g_main_eeprom_write_ok = 0u;
+volatile uint8_t g_main_eeprom_read_ok = 0u;
+volatile uint8_t g_main_eeprom_match = 0u;
+volatile uint8_t g_main_eeprom_tx[MAIN_EEPROM_TEST_SIZE] = {0xA5u, 0x5Au, 0x12u, 0x34u};
+volatile uint8_t g_main_eeprom_rx[MAIN_EEPROM_TEST_SIZE] = {0u};
 
+#if MAIN_ENABLE_EEPROM_ONESHOT
+/**
+ * @brief Run a single EEPROM write/read verification for board bring-up.
+ *
+ * This is intentionally a one-shot test, not a thread. JTAG can inspect
+ * g_main_eeprom_* variables after boot to verify device presence, write/read
+ * return values, and byte-for-byte compare status.
+ */
+static void main_run_eeprom_oneshot_test(void) {
+  uint8_t tx[MAIN_EEPROM_TEST_SIZE];
+  uint8_t rx[MAIN_EEPROM_TEST_SIZE];
+  uint8_t i;
+  uint8_t match = 1u;
+
+  for (i = 0u; i < MAIN_EEPROM_TEST_SIZE; i++) {
+    tx[i] = (uint8_t)g_main_eeprom_tx[i];
+    rx[i] = 0u;
+  }
+
+  g_main_eeprom_present = ee_CheckOk();
+  if (g_main_eeprom_present == 0u)
+    return;
+
+  g_main_eeprom_write_ok = ee_WriteBytes(tx, MAIN_EEPROM_TEST_ADDR, MAIN_EEPROM_TEST_SIZE);
+  Delay_Ms(10);
+  g_main_eeprom_read_ok = ee_ReadBytes(rx, MAIN_EEPROM_TEST_ADDR, MAIN_EEPROM_TEST_SIZE);
+
+  for (i = 0u; i < MAIN_EEPROM_TEST_SIZE; i++) {
+    g_main_eeprom_rx[i] = rx[i];
+    if (rx[i] != tx[i])
+      match = 0u;
+  }
+
+  g_main_eeprom_match = (g_main_eeprom_write_ok && g_main_eeprom_read_ok && match) ? 1u : 0u;
+}
+#endif
 
 static void main_start_optional_modules(void) {
 #if MAIN_ENABLE_BATTERY_THREAD
@@ -106,6 +155,11 @@ int main(void) {
   rt_kprintf("\r\nAGMO VCU START\r\n");
 
   (void)vcu_gateway_init();
+
+#if MAIN_ENABLE_EEPROM_ONESHOT
+  main_run_eeprom_oneshot_test();
+#endif
+
   main_start_optional_modules();
 
   return 0;
