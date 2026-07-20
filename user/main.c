@@ -1,286 +1,98 @@
-
-/*
-*************************************************************************
-*                             ������ͷ�ļ�
-*************************************************************************
-*/
+/**
+ * @file main.c
+ * @brief AGMO VCU application entry point.
+ *
+ * Keep this file focused on product boot flow. Optional legacy/test modules are
+ * gated by MAIN_ENABLE_* switches so they can be enabled for board bring-up
+ * without mixing test code into the normal VCU Gateway startup path.
+ */
 
 #include "rtthread.h"
 #include "main.h"
-#include "board.h"
-#include "spi.h"
-#include "MPU6050.h"
-
 #include "vcu_gateway.h"
 
-/*
-*************************************************************************
-*                               ����
-*************************************************************************
-*/
+/* Optional board/module bring-up switches.
+ * Default product boot should keep these disabled and start only VCU Gateway.
+ */
+#define MAIN_ENABLE_BATTERY_THREAD 0u /* AD/battery sampling test thread */
+#define MAIN_ENABLE_MPU6050_THREAD 0u /* IMU attitude/gyro test thread */
+#define MAIN_ENABLE_TH_THREAD      0u /* temperature/humidity test thread */
+#define MAIN_ENABLE_MOTOR1_THREAD  0u /* legacy motor/CAN test thread */
+#define MAIN_ENABLE_EC800_THREAD   0u /* EC800 cellular module test thread */
+#define MAIN_ENABLE_SBUS_THREAD    0u /* legacy SBUS test thread */
+#define MAIN_ENABLE_MODBUS_THREAD  0u /* Modbus test thread */
+#define MAIN_ENABLE_W5500_THREAD   0u /* W5500 test hook; function declaration must be verified before enabling */
+#define MAIN_ENABLE_EEPROM_THREAD  1u /* EEPROM bring-up test; writes fixed test bytes */
+#define MAIN_ENABLE_LED_INIT       0u /* LED init is already performed in board init */
 
-u8 num = 2; // ��������ѡ���ĵ�����Ƕ�����Ĳ�����
+/* Legacy test parameter used by bsp_motor1_thread(). */
+#define MAIN_MOTOR1_TEST_SPEED 111u
 
-uint16_t RecData = 0;
-extern int8_t flag;
-extern int8_t RS485_3_flag;
-extern int8_t RS232_2_flag;
-extern int8_t RS232_1_flag;
-
-// extern wiz_NetInfo gWIZNETINFO;
-
-// eeprom��д����
-u8 t = 1, data = 0;
-
-/*
-*************************************************************************
-*                             ��������
-*************************************************************************
-*/
-
-/*
-*************************************************************************
-*                             main ����
-*************************************************************************
-*/
+/* Legacy SBUS test selector used by bsp_Sbus_thread(). */
+#define MAIN_SBUS_TEST_CHANNEL 4u
 
 /**
- * @brief  ������
- * @param  ��
- * @retval ��
+ * @brief Start optional legacy/test modules selected by MAIN_ENABLE_* flags.
+ *
+ * These modules are not required for normal VCU Gateway operation. Keep them
+ * behind compile-time switches to avoid unexpected EEPROM writes, duplicate
+ * peripheral use, or legacy test traffic during product boot.
  */
+static void main_start_optional_modules(void) {
+#if MAIN_ENABLE_BATTERY_THREAD
+  (void)bsp_battery_thread();
+#endif
 
-static struct rt_messagequeue sbus_rx_mq;
-static volatile int a = 10;
+#if MAIN_ENABLE_MPU6050_THREAD
+  (void)bsp_MPU6050_thread();
+#endif
 
-int main(void) {
-  rt_kprintf("\r\n AGMO START MAIN\r\n");
-  rt_hw_console_output("\nAGMO\n");
+#if MAIN_ENABLE_TH_THREAD
+  (void)bsp_TH_thread();
+#endif
 
-	vcu_gateway_init();
-	
-	/*
-	for(int ab = 1; ab <= 8; ab++){ 
-		OpenCloseIO_Out(1, 1);
-		Delay_Ms(100);
-		OpenCloseIO_Out(1, 0);
-		Delay_Ms(100);
-	}
-	*/
-  // bsp_battery_thread();				//ad�ɼ�����
-  //  bsp_MPU6050_thread();				//����̬
-  // bsp_TH_thread();   					//����ʪ��
+#if MAIN_ENABLE_MOTOR1_THREAD
+  (void)bsp_motor1_thread(MAIN_MOTOR1_TEST_SPEED);
+#endif
 
-  // bsp_motor1_thread(111);				//СԲ���������
-  // bsp_EC800_USART_thread();			//Զ������ģ��
+#if MAIN_ENABLE_EC800_THREAD
+  (void)bsp_EC800_USART_thread();
+#endif
 
-  // bsp_Sbus_thread(4); // ң��������С������
+#if MAIN_ENABLE_SBUS_THREAD
+  (void)bsp_Sbus_thread(MAIN_SBUS_TEST_CHANNEL);
+#endif
 
-  // bsp_Modbus_thread();				//Modbus�Խ���λ�����߳�
+#if MAIN_ENABLE_MODBUS_THREAD
+  (void)bsp_Modbus_thread();
+#endif
 
-  // bsp_w5500_thread();					//����ͨ��ģ��
-  // bsp_Ee_thread();					//EEPROMģ�����
+#if MAIN_ENABLE_W5500_THREAD
+  /* TODO: Confirm the current W5500 thread function name before enabling. */
+  (void)bsp_w5500_thread();
+#endif
 
+#if MAIN_ENABLE_EEPROM_THREAD
+  /* EEPROM test thread writes fixed bytes to EEPROM; do not enable in product boot. */
+  (void)bsp_Ee_thread();
+#endif
+
+#if MAIN_ENABLE_LED_INIT
   Init_LED();
-
-  u16 FreqValue = 0;
-  u32 DutyValue = 0;
-
-#if 0
-
-/***************************************************DAC������Ҳ�**********************************************/
-	printf("\r\n DAC������̣�������Ҳ�\r\n");	
-	printf("\r\n ʹ��ʾ������⿪�����PA4��PA5���ţ��ɲ�����Ҳ�\r\n ");	
-	/*��ʼ��DAC����ʼDACת��,ʹ��ʾ�������PA4/PA5���ɹ۲쵽���Ҳ�*/
-	DAC_Mode_Init();
-
 #endif
+}
 
-  // MotorEnable();
-  // RCC_ClocksTypeDef RCC_Clocks;
-  //	if(MPU6050_CheckDevice(MPU6050_ADDRESS) == 0)
-  //	{
-  //		printf("��⵽MPU6050��\n");
-  //	}
-  // while(1)
-  //	{
+/**
+ * @brief Application main entry.
+ *
+ * Normal operation is intentionally simple: initialize the VCU Gateway. Board
+ * and peripheral low-level initialization is handled by rt_hw_board_init().
+ */
+int main(void) {
+  rt_kprintf("\r\nAGMO VCU START\r\n");
 
-#if 0
-/****************************************************RS485_4���Գ���****************************************************/
-		
-//		RS485_4_TxMode();													//����ģʽ
-//		printf("hello,world");
-////		RS485_4_SendByte(65);
-//		Delay_Ms(1);														//�ȴ��������
-//		RS485_4_RxMode();													//��Ϊ����ģʽ
-//		Delay_Ms(3000);
-		if(flag == 1)
-		{
-			RS485_4_TxMode();
-			RS485_4_SendByte(RecData);
-			Delay_Ms(1);
-			RS485_4_RxMode();
-			flag =0;
-		}
+  (void)vcu_gateway_init();
+  main_start_optional_modules();
 
-#endif
-
-#if 0
-/****************************************************RS485_3���Գ���****************************************************/
-		
-		RS485_3_TxMode();													//����ģʽ
-		RS485_3_SendByte(65);
-		Delay_Ms(1);														//�ȴ��������
-		RS485_3_RxMode();													//��Ϊ����ģʽ
-		Delay_Ms(3000);
-		if(RS485_3_flag == 1)
-		{
-			RS485_3_TxMode();
-			RS485_3_SendByte(RecData);
-			Delay_Ms(1);
-			RS485_3_RxMode();
-			RS485_3_flag =0;
-		}
-
-#endif
-
-#if 0
-/****************************************************RS232_2���Գ���****************************************************/
-		
-		
-//		RS232_2_SendByte(65);
-		printf("hello world\n");
-		Delay_Ms(1000);
-		if(RS232_2_flag == 1)
-		{
-			RS232_2_SendByte(RecData);
-			RS232_2_flag =0;
-		}
-
-#endif
-
-#if 0
-/************************************I2C����(AT24C02)��д��������*************************************/
-
-printf("\r\n ����һ��I2C����(AT24C02)��д�������� \r\n");
-
-//	if(ee_Test() == 1)
-//	{
-//		LED_ON();
-//		Delay_Ms(1000);
-//		LED_OFF();
-//	}
-//	else
-//	{
-//		LED_OFF();
-//	}
-
-	data =6;
-	printf("д�������Ϊ��data = %#x\n",data);
-	EEPROM_WriteByteData(3,data);
-	Delay_Ms(10);
-	t = EEPROM_ReadByteData(3);
-	printf("����������Ϊ��t = %#x\n",t);
-#endif
-
-#if 0		
-/************************************** һ·pwmʵ�ֺ�����  PWM����  ******************************************/
-		
-//		for(int i = 0;i<100;i++)
-//		{
-//			TIM_SetCompare1(TIM11, i);
-//			Delay_Ms(10);
-//		}
-//		for(int j = 100;j>0;j--)
-//		{
-//			TIM_SetCompare1(TIM11, j);
-//			Delay_Ms(10);
-//		}
-		TIM_SetCompare1(TIM11, 0);
-
-#endif
-
-#if 0		
-/************************************** ���벶����Գ���  ******************************************/
-	Delay_Ms(1000);
-	printf("hello world!\n");
-	FreqValue = Get_Input2Freq()-1;
-	printf("���ܵ����źŵ�Ƶ��Ϊ��%dHZ\n",FreqValue);
-//	DutyValue = Get_Input1Duty() + 1;
-//	printf("���ܵ����źŵ�ռ�ձ�Ϊ��%d%%\n",DutyValue);
-
-#endif
-
-#if 0
-/******************************************************CAN2�ػ�����*******************************************************/
-
-			Delay_Ms(3000);
-			
-			printf("ѭ������3��һ�Σ�\n");
-			//����Ҫ���͵�����
-			CAN2_SetTransmit(&TxMessage,Start_Data);
-			
-			//�ѷ������ݵķ�������ŷ��س����������������᷵�� CAN_TxStatus_NoMailBox
-			Mail_Box = CAN_Transmit(CAN2,&TxMessage);											//�����ݷ���
-			
-			//�������Ŵ���
-			if(Mail_Box != CAN_TxStatus_NoMailBox)
-			{
-				
-				//�ȴ�ֱ�������佫���ݷ��͵�CAN�շ������
-				while(CAN_TransmitStatus(CAN2,Mail_Box)!=CAN_TxStatus_Ok );//�ȴ�CAN�շ������͵�������ϣ���ʹ��CAN_TransmitStatus�鿴״̬
-				
-			}
-			else
-			{
-				printf("no mail_box !\n");
-			}
-
-			
-			Delay_Ms(10);
-			//can_delay(10000);//�ȴ�������ϣ���ʹ��CAN_TransmitStatus�鿴״̬
-			printf("����CAN2����Ϊ��");
-			CAN2_PrintSendData(&TxMessage);
-
-			putchar(10);
-			if(CAN_Flag == 1)
-			{
-				printf("����CAN2����׼ȷ����\n");
-				printf("���յ�CAN2����Ϊ��");
-				//�����ݴ�ӡ��
-				CAN2_PrintRecvData(&RxMessage);
-				CAN_Flag = 0;
-			}
-
-#endif
-
-#if 0
-/*************************************************** ��дSD�� **************************************************/
-	if(0 != SDCardDeviceInit())
-	{
-		printf("��ʼ��ʧ�ܣ�\n");
-	}
-	else
-	{
-		printf("��ʼ���ɹ���\n");
-	}
-	Delay_Ms(1000);
-#endif
-
-#if 0
-/*************************************************** �޸���Ƶ ��ȡ���������ϵ�Ƶ�� **************************************************/
-	SystemCoreClockUpdate();										//�޸���Ƶ�����ڸ���ϵͳʱ�ӵ�ֵ
-	printf("SystemCoreClock:%d\n",SystemCoreClock);
-	
-	RCC_GetClocksFreq(&RCC_Clocks);	
-	printf("RCC_Clocks.HCLK_Frequency :%d\n",RCC_Clocks.HCLK_Frequency);
-	printf("RCC_Clocks.PCLK1_Frequency :%d\n",RCC_Clocks.PCLK1_Frequency);
-	printf("RCC_Clocks.PCLK2_Frequency :%d\n",RCC_Clocks.PCLK2_Frequency);
-	printf("RCC_Clocks.SYSCLK_Frequency :%d\n",RCC_Clocks.SYSCLK_Frequency);
-	Delay_ms(1000);
-#endif
-
-  //	}
-
-  // return 0;
+  return 0;
 }
